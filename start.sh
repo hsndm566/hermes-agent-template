@@ -59,6 +59,47 @@ sync_runtime_env_var TELEGRAM_ALLOW_ALL_USERS
 sync_runtime_env_var TELEGRAM_ALLOWED_USERS
 sync_runtime_env_var GATEWAY_ALLOW_ALL_USERS
 
+# Hermes has a second access-control layer on the platform adapter itself.
+# For Telegram DMs, an allow-all env flag alone is not sufficient when the
+# adapter's dm_policy remains pairing/allowlist. Make that policy explicitly
+# controllable from Railway so bootstrap can temporarily use "open" and then
+# switch back to "allowlist" once the owner's numeric Telegram ID is known.
+python - <<'PY' || true
+import os
+from pathlib import Path
+
+policy = os.getenv("TELEGRAM_DM_POLICY", "").strip().lower()
+if policy:
+    if policy not in {"open", "allowlist", "disabled", "pairing"}:
+        print(f"[telegram-policy] ignoring invalid TELEGRAM_DM_POLICY={policy!r}", flush=True)
+    else:
+        try:
+            import yaml
+            path = Path("/data/.hermes/config.yaml")
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            gateway = data.setdefault("gateway", {})
+            if not isinstance(gateway, dict):
+                gateway = {}
+                data["gateway"] = gateway
+            platforms = gateway.setdefault("platforms", {})
+            if not isinstance(platforms, dict):
+                platforms = {}
+                gateway["platforms"] = platforms
+            telegram = platforms.setdefault("telegram", {})
+            if not isinstance(telegram, dict):
+                telegram = {}
+                platforms["telegram"] = telegram
+            extra = telegram.setdefault("extra", {})
+            if not isinstance(extra, dict):
+                extra = {}
+                telegram["extra"] = extra
+            extra["dm_policy"] = policy
+            path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+            print(f"[telegram-policy] dm_policy={policy}", flush=True)
+        except Exception as exc:
+            print(f"[telegram-policy] failed: {type(exc).__name__}", flush=True)
+PY
+
 # Safe Telegram diagnostic: verify which bot the configured token belongs to
 # without logging or persisting the token itself.
 python - <<'PY' || true
