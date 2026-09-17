@@ -59,6 +59,31 @@ sync_runtime_env_var TELEGRAM_ALLOW_ALL_USERS
 sync_runtime_env_var TELEGRAM_ALLOWED_USERS
 sync_runtime_env_var GATEWAY_ALLOW_ALL_USERS
 
+# Safe Telegram diagnostic: verify which bot the configured token belongs to
+# without logging or persisting the token itself.
+python - <<'PY' || true
+import json, os, urllib.request
+
+token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+if token:
+    try:
+        with urllib.request.urlopen(
+            f"https://api.telegram.org/bot{token}/getMe", timeout=8
+        ) as response:
+            payload = json.load(response)
+        result = payload.get("result") or {}
+        username = result.get("username")
+        bot_id = result.get("id")
+        if payload.get("ok") and username:
+            print(f"[telegram-diagnostic] token identity=@{username} bot_id={bot_id}", flush=True)
+        else:
+            print("[telegram-diagnostic] getMe returned no valid bot identity", flush=True)
+    except Exception as exc:
+        print(f"[telegram-diagnostic] getMe failed: {type(exc).__name__}", flush=True)
+else:
+    print("[telegram-diagnostic] TELEGRAM_BOT_TOKEN is missing", flush=True)
+PY
+
 # Bootstrap OAuth tokens from env var (e.g. xAI Grok SuperGrok).
 # Set HERMES_AUTH_JSON_BOOTSTRAP to the contents of a locally-generated
 # ~/.hermes/auth.json. Written only once — subsequent token refreshes update
