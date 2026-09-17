@@ -219,6 +219,46 @@ else:
     print("[telegram-diagnostic] TELEGRAM_BOT_TOKEN is missing", flush=True)
 PY
 
+# Temporary sanitized provider diagnostics: surface only provider/error metadata
+# from persisted Hermes logs so Railway can show why model requests failed.
+python - <<'PY' || true
+import re
+from pathlib import Path
+
+paths = [
+    Path("/data/.hermes/logs/gateway.log"),
+    Path("/data/.hermes/logs/errors.log"),
+    Path("/data/.hermes/logs/agent.log"),
+]
+needle = re.compile(r"(deepseek|provider|retry|failed|error|exception|unauthorized|forbidden|invalid|status.?code|\b401\b|\b403\b|\b404\b|\b429\b)", re.I)
+redactions = [
+    (re.compile(r"sk-[A-Za-z0-9._-]{8,}"), "sk-[REDACTED]"),
+    (re.compile(r"\b\d{8,12}:[A-Za-z0-9_-]{20,}\b"), "[BOT_TOKEN_REDACTED]"),
+    (re.compile(r"(authorization\s*[:=]\s*bearer\s+)[^\s,]+", re.I), r"\1[REDACTED]"),
+    (re.compile(r"(api[_-]?key\s*[:=]\s*)[^\s,]+", re.I), r"\1[REDACTED]"),
+]
+out=[]
+for p in paths:
+    if not p.exists():
+        continue
+    try:
+        lines=p.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        continue
+    for line in lines[-1200:]:
+        if not needle.search(line):
+            continue
+        # Avoid printing user/assistant message bodies.
+        if re.search(r"(prompt|user_message|assistant_message|content['\"]?\s*:)", line, re.I):
+            continue
+        s=line
+        for rx,repl in redactions:
+            s=rx.sub(repl,s)
+        out.append(f"{p.name}: {s[:1200]}")
+for line in out[-80:]:
+    print("[provider-diagnostic]", line, flush=True)
+PY
+
 # Bootstrap OAuth tokens from env var (e.g. xAI Grok SuperGrok).
 # Set HERMES_AUTH_JSON_BOOTSTRAP to the contents of a locally-generated
 # ~/.hermes/auth.json. Written only once — subsequent token refreshes update
