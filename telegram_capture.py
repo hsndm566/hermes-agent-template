@@ -1,6 +1,5 @@
 import json
 import os
-import sys
 import time
 import urllib.parse
 import urllib.request
@@ -27,10 +26,10 @@ def api(method: str, params: dict | None = None):
     return payload.get("result")
 
 
-def main():
+def capture_owner():
     if not PAIR_CODE:
         print("[telegram-capture] disabled: TELEGRAM_CAPTURE_CODE not set", flush=True)
-        return 0
+        return
 
     if OUT.exists():
         try:
@@ -40,11 +39,10 @@ def main():
                     f"[telegram-capture] existing owner user_id={existing['user_id']} username={existing.get('username','')}",
                     flush=True,
                 )
-                return 0
+                return
         except Exception:
             pass
 
-    # Ensure polling is allowed. Keep pending updates; we only consume them after inspecting them.
     try:
         api("deleteWebhook", {"drop_pending_updates": "false"})
     except Exception as exc:
@@ -95,15 +93,14 @@ def main():
                 f"[telegram-capture] CAPTURED user_id={owner['user_id']} username={owner['username']} chat_id={owner['chat_id']}",
                 flush=True,
             )
-            return 0
+            return
 
     print("[telegram-capture] TIMEOUT without matching message; starting Hermes without owner capture", flush=True)
-    return 0
 
 
 if __name__ == "__main__":
     try:
-        raise SystemExit(main())
+        capture_owner()
     except Exception as exc:
         print(f"[telegram-capture] ERROR {type(exc).__name__}: {exc}", flush=True)
-        raise SystemExit(0)
+    os.execv("/usr/bin/tini", ["/usr/bin/tini", "-g", "--", "/app/start.sh"])
