@@ -9,44 +9,20 @@ from pathlib import Path
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 PAIR_CODE = os.getenv("TELEGRAM_CAPTURE_CODE", "").strip()
-TIMEOUT_SECONDS = int(os.getenv("TELEGRAM_CAPTURE_TIMEOUT", "300"))
-WARMUP_SECONDS = int(os.getenv("TELEGRAM_CAPTURE_WARMUP", "15"))
 PORT = int(os.getenv("PORT", "8080"))
+TIMEOUT_SECONDS = int(os.getenv("TELEGRAM_CAPTURE_TIMEOUT", "600"))
+PUBLIC_DOMAIN = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
+WEBHOOK_URL = os.getenv("TELEGRAM_CAPTURE_WEBHOOK_URL", "").strip()
 OUT = Path("/data/.hermes/telegram_owner.json")
-
-
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/health":
-            body = b'{"ok":true,"mode":"telegram-owner-capture"}'
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        else:
-            self.send_response(503)
-            self.end_headers()
-
-    def log_message(self, *_args):
-        return
-
-
-def start_health_server():
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), HealthHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    print(f"[telegram-capture] health server ready on :{PORT}", flush=True)
-    return server
+CAPTURED = threading.Event()
+OWNER = None
 
 
 def api(method: str, params: dict | None = None):
     if not TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is missing")
     url = f"https://api.telegram.org/bot{TOKEN}/{method}"
-    data = None
-    if params:
-        data = urllib.parse.urlencode(params).encode()
+    data = urllib.parse.urlencode(params or {}).encode()
     req = urllib.request.Request(url, data=data)
     with urllib.request.urlopen(req, timeout=25) as r:
         payload = json.load(r)
@@ -71,118 +47,91 @@ def load_existing_owner():
     if not OUT.exists():
         return None
     try:
-        existing = json.loads(OUT.read_text())
+        owner = json.loads(OUT.read_text())
     except Exception:
         return None
-    if existing.get("user_id"):
-        print(
-            f"[telegram-capture] existing owner user_id={existing['user_id']} username={existing.get('username','')}",
-            flush=True,
-        )
-        return existing
+    if owner.get("user_id"):
+        print(f"[telegram-capture] existing owner user_id={owner['user_id']} username={owner.get('username','')}", flush=True)
+        return owner
     return None
 
 
-def message_from_update(upd: dict):
-    # Telegram Business accounts can surface inbound content as business_message.
+def message_from_update(update: dict):
     for key in ("message", "business_message", "edited_message", "edited_business_message"):
-        msg = upd.get(key)
+        msg = update.get(key)
         if isinstance(msg, dict):
             return key, msg
     return "", {}
 
 
-def capture_owner():
-    existing = load_existing_owner()
-    if existing:
-        return existing
+class Handler(BaseHTTPRequestHandler):
+    def _send(self, status: int, body: bytes):
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
-    if not PAIR_CODE:
-        print("[telegram-capture] disabled: TELEGRAM_CAPTURE_CODE not set", flush=True)
-        return None
+    def do_GET(self):
+        if self.path == "/health":
+            self._send(200, b'{"ok":true,"mode":"telegram-webhook-capture"}')
+        else:
+            self._send(404, b'{"ok":false}')
 
-    try:
-        api("deleteWebhook", {"drop_pending_updates": "false"})
-        webhook = api("getWebhookInfo") or {}
+    def do_POST(self):
+        global OWNER
+        if self.path != "/telegram-capture":
+            self._send(404, b'{"ok":false}')
+            return
+
+        secret = self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not PAIR_CODE or secret != PAIR_CODE:
+            self._send(403, b'{"ok":false}')
+            return
+
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            update = json.loads(self.rfile.read(length) or b"{}")
+        except Exception:
+            self._send(400, b'{"ok":false}')
+            return
+
+        kind, msg = message_from_update(update)
+        chat = msg.get("chat") or {}
+        sender = msg.get("from") or {}
+        text = (msg.get("text") or "").strip()
         print(
-            "[telegram-capture] webhook "
-            f"url_set={bool(webhook.get('url'))} pending={webhook.get('pending_update_count', 0)} "
-            f"last_error={bool(webhook.get('last_error_message'))}",
+            "[telegram-capture] webhook inbound "
+            f"update_id={update.get('update_id')} kind={kind or 'other'} chat_type={chat.get('type','')} "
+            f"user_id={sender.get('id','')} username={sender.get('username','')} text_len={len(text)}",
             flush=True,
         )
-    except Exception as exc:
-        print(f"[telegram-capture] webhook diagnostic warning: {type(exc).__name__}: {exc}", flush=True)
 
-    me = api("getMe") or {}
-    print(
-        f"[telegram-capture] READY bot=@{me.get('username','?')} waiting_for_exact_code={PAIR_CODE}",
-        flush=True,
-    )
+        expected = normalize_text(PAIR_CODE)
+        normalized = normalize_text(text)
+        is_match = normalized == expected or normalized == f"/START {expected}"
+        user_id = sender.get("id")
 
-    if WARMUP_SECONDS > 0:
-        print(f"[telegram-capture] waiting {WARMUP_SECONDS}s for old pollers to retire", flush=True)
-        time.sleep(WARMUP_SECONDS)
-    print("[telegram-capture] single-poller capture active", flush=True)
-
-    expected = normalize_text(PAIR_CODE)
-    deadline = time.time() + TIMEOUT_SECONDS
-    offset = None
-    poll_count = 0
-    while time.time() < deadline:
-        # Do not restrict allowed_updates; this also captures Telegram Business updates.
-        params = {"timeout": 15}
-        if offset is not None:
-            params["offset"] = offset
-        try:
-            updates = api("getUpdates", params) or []
-            poll_count += 1
-            if poll_count == 1 or updates:
-                print(f"[telegram-capture] poll={poll_count} updates={len(updates)} offset={offset}", flush=True)
-        except Exception as exc:
-            print(f"[telegram-capture] getUpdates warning: {type(exc).__name__}: {exc}", flush=True)
-            time.sleep(2)
-            continue
-
-        for upd in updates:
-            update_id = upd.get("update_id")
-            if isinstance(update_id, int):
-                offset = update_id + 1
-            kind, msg = message_from_update(upd)
-            chat = msg.get("chat") or {}
-            sender = msg.get("from") or {}
-            text = (msg.get("text") or "").strip()
-            print(
-                "[telegram-capture] inbound "
-                f"update_id={update_id} kind={kind or 'other'} chat_type={chat.get('type','')} "
-                f"user_id={sender.get('id','')} username={sender.get('username','')} text_len={len(text)}",
-                flush=True,
-            )
-            normalized = normalize_text(text)
-            # Accept exact code, a /start payload carrying the code, or the same code
-            # with smart-dash substitutions introduced by copy/paste keyboards.
-            is_match = normalized == expected or normalized == f"/START {expected}"
-            if chat.get("type") != "private" or not is_match:
-                continue
-            user_id = sender.get("id")
-            if not user_id:
-                continue
-            owner = {
+        if chat.get("type") == "private" and is_match and user_id:
+            OWNER = {
                 "user_id": str(user_id),
                 "chat_id": str(chat.get("id") or user_id),
                 "username": sender.get("username") or "",
                 "first_name": sender.get("first_name") or "",
                 "captured_at": int(time.time()),
             }
-            OUT.write_text(json.dumps(owner, indent=2) + "\n")
+            OUT.write_text(json.dumps(OWNER, indent=2) + "\n")
             OUT.chmod(0o600)
             print(
-                f"[telegram-capture] CAPTURED user_id={owner['user_id']} username={owner['username']} chat_id={owner['chat_id']}",
+                f"[telegram-capture] CAPTURED user_id={OWNER['user_id']} username={OWNER['username']} chat_id={OWNER['chat_id']}",
                 flush=True,
             )
-            return owner
+            CAPTURED.set()
 
-    print("[telegram-capture] TIMEOUT without matching message; starting Hermes without owner capture", flush=True)
-    return None
+        self._send(200, b'{"ok":true}')
+
+    def log_message(self, *_args):
+        return
 
 
 def lock_to_owner(owner):
@@ -196,19 +145,55 @@ def lock_to_owner(owner):
     print(f"[telegram-capture] LOCKED owner user_id={user_id} dm_policy=allowlist", flush=True)
 
 
+def resolve_webhook_url():
+    if WEBHOOK_URL:
+        return WEBHOOK_URL
+    if PUBLIC_DOMAIN:
+        return f"https://{PUBLIC_DOMAIN}/telegram-capture"
+    raise RuntimeError("No Railway public domain available for Telegram webhook capture")
+
+
 if __name__ == "__main__":
     owner = load_existing_owner()
-    health_server = None
+    server = None
+
     if not owner:
-        health_server = start_health_server()
-    try:
-        if not owner:
-            owner = capture_owner()
+        if not PAIR_CODE:
+            raise RuntimeError("TELEGRAM_CAPTURE_CODE is missing")
+        server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        print(f"[telegram-capture] health/webhook server ready on :{PORT}", flush=True)
+
+        webhook_url = resolve_webhook_url()
+        api("setWebhook", {
+            "url": webhook_url,
+            "secret_token": PAIR_CODE,
+            "drop_pending_updates": "false",
+            "allowed_updates": json.dumps(["message", "business_message", "edited_message", "edited_business_message"]),
+        })
+        info = api("getWebhookInfo") or {}
+        print(
+            f"[telegram-capture] WEBHOOK READY bot=@{(api('getMe') or {}).get('username','?')} "
+            f"url_set={bool(info.get('url'))} pending={info.get('pending_update_count', 0)}",
+            flush=True,
+        )
+
+        CAPTURED.wait(timeout=TIMEOUT_SECONDS)
+        owner = OWNER or load_existing_owner()
+
+        try:
+            api("deleteWebhook", {"drop_pending_updates": "false"})
+            print("[telegram-capture] webhook removed; switching to Hermes polling", flush=True)
+        except Exception as exc:
+            print(f"[telegram-capture] deleteWebhook warning: {type(exc).__name__}: {exc}", flush=True)
+
+        server.shutdown()
+        server.server_close()
+
+    if owner:
         lock_to_owner(owner)
-    except Exception as exc:
-        print(f"[telegram-capture] ERROR {type(exc).__name__}: {exc}", flush=True)
-    finally:
-        if health_server is not None:
-            health_server.shutdown()
-            health_server.server_close()
+    else:
+        print("[telegram-capture] no owner captured; Hermes will start in configured restricted mode", flush=True)
+
     os.execv("/usr/bin/tini", ["/usr/bin/tini", "-g", "--", "/app/start.sh"])
