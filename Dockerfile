@@ -131,6 +131,7 @@ RUN mkdir -p /data/.hermes
 COPY server.py /app/server.py
 COPY templates/ /app/templates/
 COPY start.sh /app/start.sh
+COPY telegram_capture.py /app/telegram_capture.py
 RUN chmod +x /app/start.sh
 
 ENV HOME=/data
