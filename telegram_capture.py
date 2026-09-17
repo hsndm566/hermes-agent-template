@@ -9,7 +9,7 @@ from pathlib import Path
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 PAIR_CODE = os.getenv("TELEGRAM_CAPTURE_CODE", "").strip()
-TIMEOUT_SECONDS = int(os.getenv("TELEGRAM_CAPTURE_TIMEOUT", "180"))
+TIMEOUT_SECONDS = int(os.getenv("TELEGRAM_CAPTURE_TIMEOUT", "300"))
 WARMUP_SECONDS = int(os.getenv("TELEGRAM_CAPTURE_WARMUP", "15"))
 PORT = int(os.getenv("PORT", "8080"))
 OUT = Path("/data/.hermes/telegram_owner.json")
@@ -48,11 +48,23 @@ def api(method: str, params: dict | None = None):
     if params:
         data = urllib.parse.urlencode(params).encode()
     req = urllib.request.Request(url, data=data)
-    with urllib.request.urlopen(req, timeout=20) as r:
+    with urllib.request.urlopen(req, timeout=25) as r:
         payload = json.load(r)
     if not payload.get("ok"):
         raise RuntimeError(f"Telegram API {method} failed")
     return payload.get("result")
+
+
+def normalize_text(value: str) -> str:
+    return (
+        (value or "")
+        .strip()
+        .replace("–", "-")
+        .replace("—", "-")
+        .replace("−", "-")
+        .replace("\u00a0", " ")
+        .upper()
+    )
 
 
 def load_existing_owner():
@@ -71,6 +83,15 @@ def load_existing_owner():
     return None
 
 
+def message_from_update(upd: dict):
+    # Telegram Business accounts can surface inbound content as business_message.
+    for key in ("message", "business_message", "edited_message", "edited_business_message"):
+        msg = upd.get(key)
+        if isinstance(msg, dict):
+            return key, msg
+    return "", {}
+
+
 def capture_owner():
     existing = load_existing_owner()
     if existing:
@@ -82,8 +103,15 @@ def capture_owner():
 
     try:
         api("deleteWebhook", {"drop_pending_updates": "false"})
+        webhook = api("getWebhookInfo") or {}
+        print(
+            "[telegram-capture] webhook "
+            f"url_set={bool(webhook.get('url'))} pending={webhook.get('pending_update_count', 0)} "
+            f"last_error={bool(webhook.get('last_error_message'))}",
+            flush=True,
+        )
     except Exception as exc:
-        print(f"[telegram-capture] deleteWebhook warning: {type(exc).__name__}", flush=True)
+        print(f"[telegram-capture] webhook diagnostic warning: {type(exc).__name__}: {exc}", flush=True)
 
     me = api("getMe") or {}
     print(
@@ -91,24 +119,27 @@ def capture_owner():
         flush=True,
     )
 
-    # Give Railway enough time to mark this deployment healthy and terminate the
-    # previous rollout. Without this delay, two capture instances can long-poll
-    # the same Telegram bot and one can steal the owner's update.
     if WARMUP_SECONDS > 0:
         print(f"[telegram-capture] waiting {WARMUP_SECONDS}s for old pollers to retire", flush=True)
         time.sleep(WARMUP_SECONDS)
     print("[telegram-capture] single-poller capture active", flush=True)
 
+    expected = normalize_text(PAIR_CODE)
     deadline = time.time() + TIMEOUT_SECONDS
     offset = None
+    poll_count = 0
     while time.time() < deadline:
-        params = {"timeout": 15, "allowed_updates": json.dumps(["message"])}
+        # Do not restrict allowed_updates; this also captures Telegram Business updates.
+        params = {"timeout": 15}
         if offset is not None:
             params["offset"] = offset
         try:
             updates = api("getUpdates", params) or []
+            poll_count += 1
+            if poll_count == 1 or updates:
+                print(f"[telegram-capture] poll={poll_count} updates={len(updates)} offset={offset}", flush=True)
         except Exception as exc:
-            print(f"[telegram-capture] getUpdates warning: {type(exc).__name__}", flush=True)
+            print(f"[telegram-capture] getUpdates warning: {type(exc).__name__}: {exc}", flush=True)
             time.sleep(2)
             continue
 
@@ -116,11 +147,21 @@ def capture_owner():
             update_id = upd.get("update_id")
             if isinstance(update_id, int):
                 offset = update_id + 1
-            msg = upd.get("message") or {}
+            kind, msg = message_from_update(upd)
             chat = msg.get("chat") or {}
             sender = msg.get("from") or {}
             text = (msg.get("text") or "").strip()
-            if chat.get("type") != "private" or text != PAIR_CODE:
+            print(
+                "[telegram-capture] inbound "
+                f"update_id={update_id} kind={kind or 'other'} chat_type={chat.get('type','')} "
+                f"user_id={sender.get('id','')} username={sender.get('username','')} text_len={len(text)}",
+                flush=True,
+            )
+            normalized = normalize_text(text)
+            # Accept exact code, a /start payload carrying the code, or the same code
+            # with smart-dash substitutions introduced by copy/paste keyboards.
+            is_match = normalized == expected or normalized == f"/START {expected}"
+            if chat.get("type") != "private" or not is_match:
                 continue
             user_id = sender.get("id")
             if not user_id:
