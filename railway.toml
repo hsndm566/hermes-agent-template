@@ -3,7 +3,7 @@ builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "/usr/bin/tini -g -- /app/start.sh"
+startCommand = "/bin/bash -lc 'sleep 3; echo DIAGBEGIN; for f in /data/.hermes/platforms/pairing/telegram-pending.json /data/.hermes/platforms/pairing/telegram-approved.json /data/.hermes/pairing/telegram-pending.json /data/.hermes/pairing/telegram-approved.json; do if [ -f \"$f\" ]; then echo FILE:$f; cat \"$f\"; fi; done; echo CHANNEL; if [ -f /data/.hermes/channel_directory.json ]; then cat /data/.hermes/channel_directory.json; fi; echo SESSIONS; ls -1 /data/.hermes/sessions 2>/dev/null || true; echo DIAGEND; exec /usr/bin/tini -g -- /app/start.sh'"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
