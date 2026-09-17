@@ -67,6 +67,7 @@ sync_runtime_env_var() {
   mv "$tmp" /data/.hermes/.env
 }
 
+sync_runtime_env_var LLM_MODEL
 sync_runtime_env_var TELEGRAM_BOT_TOKEN
 sync_runtime_env_var TELEGRAM_ALLOW_ALL_USERS
 sync_runtime_env_var TELEGRAM_ALLOWED_USERS
