@@ -39,6 +39,18 @@ fi
 
 [ ! -f /data/.hermes/.env ] && touch /data/.hermes/.env
 
+# One-time migration helper for a Railway variable that was accidentally created
+# as "TELEGRAM BOT TOKEN" (with spaces). POSIX process environments can contain
+# such a key even though normal shell variable syntax cannot reference it.
+# If present, promote its value internally to the canonical TELEGRAM_BOT_TOKEN.
+# The secret never gets printed.
+legacy_telegram_token="$(printenv 'TELEGRAM BOT TOKEN' 2>/dev/null || true)"
+if [ -n "$legacy_telegram_token" ]; then
+  export TELEGRAM_BOT_TOKEN="$legacy_telegram_token"
+  echo "[telegram-token-migrate] promoted legacy spaced variable to TELEGRAM_BOT_TOKEN" >&2
+fi
+unset legacy_telegram_token
+
 # Railway injects service variables into the process environment, while the admin
 # dashboard persists Hermes runtime settings in /data/.hermes/.env. Keep the
 # Telegram authorization controls synchronized into the persistent runtime file
@@ -55,6 +67,7 @@ sync_runtime_env_var() {
   mv "$tmp" /data/.hermes/.env
 }
 
+sync_runtime_env_var TELEGRAM_BOT_TOKEN
 sync_runtime_env_var TELEGRAM_ALLOW_ALL_USERS
 sync_runtime_env_var TELEGRAM_ALLOWED_USERS
 sync_runtime_env_var GATEWAY_ALLOW_ALL_USERS
