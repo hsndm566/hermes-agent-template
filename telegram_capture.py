@@ -26,22 +26,30 @@ def api(method: str, params: dict | None = None):
     return payload.get("result")
 
 
+def load_existing_owner():
+    if not OUT.exists():
+        return None
+    try:
+        existing = json.loads(OUT.read_text())
+    except Exception:
+        return None
+    if existing.get("user_id"):
+        print(
+            f"[telegram-capture] existing owner user_id={existing['user_id']} username={existing.get('username','')}",
+            flush=True,
+        )
+        return existing
+    return None
+
+
 def capture_owner():
+    existing = load_existing_owner()
+    if existing:
+        return existing
+
     if not PAIR_CODE:
         print("[telegram-capture] disabled: TELEGRAM_CAPTURE_CODE not set", flush=True)
-        return
-
-    if OUT.exists():
-        try:
-            existing = json.loads(OUT.read_text())
-            if existing.get("user_id"):
-                print(
-                    f"[telegram-capture] existing owner user_id={existing['user_id']} username={existing.get('username','')}",
-                    flush=True,
-                )
-                return
-        except Exception:
-            pass
+        return None
 
     try:
         api("deleteWebhook", {"drop_pending_updates": "false"})
@@ -93,14 +101,28 @@ def capture_owner():
                 f"[telegram-capture] CAPTURED user_id={owner['user_id']} username={owner['username']} chat_id={owner['chat_id']}",
                 flush=True,
             )
-            return
+            return owner
 
     print("[telegram-capture] TIMEOUT without matching message; starting Hermes without owner capture", flush=True)
+    return None
+
+
+def lock_to_owner(owner):
+    if not owner or not owner.get("user_id"):
+        return
+    user_id = str(owner["user_id"])
+    os.environ["TELEGRAM_ALLOWED_USERS"] = user_id
+    os.environ["TELEGRAM_ALLOW_ALL_USERS"] = "false"
+    os.environ["GATEWAY_ALLOW_ALL_USERS"] = "false"
+    os.environ["TELEGRAM_DM_POLICY"] = "allowlist"
+    print(f"[telegram-capture] LOCKED owner user_id={user_id} dm_policy=allowlist", flush=True)
 
 
 if __name__ == "__main__":
+    owner = None
     try:
-        capture_owner()
+        owner = capture_owner()
+        lock_to_owner(owner)
     except Exception as exc:
         print(f"[telegram-capture] ERROR {type(exc).__name__}: {exc}", flush=True)
     os.execv("/usr/bin/tini", ["/usr/bin/tini", "-g", "--", "/app/start.sh"])
