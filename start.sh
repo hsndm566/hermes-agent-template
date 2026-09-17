@@ -113,6 +113,87 @@ if policy:
             print(f"[telegram-policy] failed: {type(exc).__name__}", flush=True)
 PY
 
+# One-time private Telegram bootstrap for a brand-new bot.
+# When enabled, clear stale Telegram pairing state inherited from the previous
+# bot, then approve only the first *fresh* Telegram pairing request and persist
+# that approval on the Railway volume. A marker prevents this from ever running
+# again after a user has been locked in.
+if [ "${TELEGRAM_AUTO_APPROVE_FIRST:-false}" = "true" ] && [ ! -f /data/.hermes/.telegram_first_user_lock_done ]; then
+  python - <<'PY' &
+import json
+import os
+import time
+from pathlib import Path
+
+home = Path("/data/.hermes")
+marker = home / ".telegram_first_user_lock_done"
+
+def active_pairing_dir():
+    legacy = home / "pairing"
+    try:
+        if legacy.is_dir() and any(legacy.iterdir()):
+            return legacy
+    except OSError:
+        return legacy
+    return home / "platforms" / "pairing"
+
+d = active_pairing_dir()
+d.mkdir(parents=True, exist_ok=True)
+
+# New bot, clean Telegram pairing slate only. Other platforms are untouched.
+for name in ("telegram-pending.json", "telegram-approved.json"):
+    p = d / name
+    try:
+        p.write_text("{}\n", encoding="utf-8")
+        os.chmod(p, 0o600)
+    except OSError:
+        pass
+
+print("[telegram-auto-pair] armed for first fresh Telegram user", flush=True)
+
+pending_path = d / "telegram-pending.json"
+approved_path = d / "telegram-approved.json"
+deadline = time.time() + 900
+
+while time.time() < deadline:
+    try:
+        pending = json.loads(pending_path.read_text(encoding="utf-8")) if pending_path.exists() else {}
+    except Exception:
+        pending = {}
+
+    if pending:
+        # Approve the oldest fresh request only.
+        entry_id, entry = min(
+            pending.items(),
+            key=lambda kv: (kv[1] or {}).get("created_at", time.time())
+            if isinstance(kv[1], dict) else time.time(),
+        )
+        if isinstance(entry, dict):
+            user_id = str(entry.get("user_id") or "").strip()
+            if user_id:
+                pending.pop(entry_id, None)
+                try:
+                    approved = json.loads(approved_path.read_text(encoding="utf-8")) if approved_path.exists() else {}
+                except Exception:
+                    approved = {}
+                approved[user_id] = {
+                    "user_name": entry.get("user_name", ""),
+                    "approved_at": time.time(),
+                }
+                pending_path.write_text(json.dumps(pending, indent=2) + "\n", encoding="utf-8")
+                approved_path.write_text(json.dumps(approved, indent=2) + "\n", encoding="utf-8")
+                os.chmod(pending_path, 0o600)
+                os.chmod(approved_path, 0o600)
+                marker.write_text("locked\n", encoding="utf-8")
+                os.chmod(marker, 0o600)
+                print("[telegram-auto-pair] first fresh Telegram user approved and locked", flush=True)
+                break
+    time.sleep(1)
+else:
+    print("[telegram-auto-pair] no fresh pairing request received before timeout", flush=True)
+PY
+fi
+
 # Safe Telegram diagnostic: verify which bot the configured token belongs to
 # without logging or persisting the token itself.
 python - <<'PY' || true
