@@ -39,6 +39,26 @@ fi
 
 [ ! -f /data/.hermes/.env ] && touch /data/.hermes/.env
 
+# Railway injects service variables into the process environment, while the admin
+# dashboard persists Hermes runtime settings in /data/.hermes/.env. Keep the
+# Telegram authorization controls synchronized into the persistent runtime file
+# so gateway policy survives restarts and redeploys.
+sync_runtime_env_var() {
+  local key="$1"
+  local value="${!key:-}"
+  [ -z "$value" ] && return 0
+
+  local tmp
+  tmp="$(mktemp)"
+  grep -v "^${key}=" /data/.hermes/.env > "$tmp" || true
+  printf '%s=%s\n' "$key" "$value" >> "$tmp"
+  mv "$tmp" /data/.hermes/.env
+}
+
+sync_runtime_env_var TELEGRAM_ALLOW_ALL_USERS
+sync_runtime_env_var TELEGRAM_ALLOWED_USERS
+sync_runtime_env_var GATEWAY_ALLOW_ALL_USERS
+
 # Bootstrap OAuth tokens from env var (e.g. xAI Grok SuperGrok).
 # Set HERMES_AUTH_JSON_BOOTSTRAP to the contents of a locally-generated
 # ~/.hermes/auth.json. Written only once — subsequent token refreshes update
