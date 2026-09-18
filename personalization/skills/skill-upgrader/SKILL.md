@@ -16,6 +16,9 @@ Workflow:
 6. Install with `hermes skills install <identifier> --yes`.
 7. Verify it appears in `hermes skills list` and note that a new session may be required.
 8. If an installed skill has a better upstream version, use `hermes skills check` then `hermes skills update`.
-9. If the workflow is unique to Hasan and repeated, create or patch a local skill instead of forcing a generic one.
+9. If the source is not already a Hermes skill (docs, repo, workflow, file, conversation, or URL), use Hermes `/learn <source>` to turn it into a reusable skill, then inspect the generated result.
+10. After a successful complex workflow, use `/refine` or the built-in background review so durable lessons can become memory/skill updates.
+11. If the workflow is unique to Hasan and repeated, create or patch a local skill instead of forcing a generic one.
+12. Keep provenance clear: know whether a skill is bundled, official, hub-installed, GitHub-sourced, or locally learned.
 
 Never expose secrets or weaken approval/security settings merely to make an install pass.
