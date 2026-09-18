@@ -246,6 +246,7 @@ ENV_VARS = [
     ("LLM_MODEL",               "Model",                    "model",     False),
     ("OPENROUTER_API_KEY",       "OpenRouter",               "provider",  True),
     ("DEEPSEEK_API_KEY",         "DeepSeek",                 "provider",  True),
+    ("GROQ_API_KEY",             "Groq",                     "provider",  True),
     ("DASHSCOPE_API_KEY",        "Qwen Cloud (DashScope)",   "provider",  True),
     ("GLM_API_KEY",              "GLM / Z.AI",               "provider",  True),
     ("KIMI_API_KEY",             "Kimi",                     "provider",  True),
@@ -356,6 +357,7 @@ ENV_LABELS = {k: l for k, l, _, _ in ENV_VARS}
 HERMES_PROVIDER_IDS = {
     "OPENROUTER_API_KEY":    "openrouter",
     "DEEPSEEK_API_KEY":      "deepseek",
+    "GROQ_API_KEY":          "custom:groq",   # Named OpenAI-compatible provider configured in config.yaml
     "DASHSCOPE_API_KEY":     "alibaba",       # "Qwen Cloud" in hermes' own UI
     "GLM_API_KEY":           "zai",           # "Z.AI / GLM"
     "KIMI_API_KEY":          "kimi-coding",
