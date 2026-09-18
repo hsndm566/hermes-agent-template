@@ -501,13 +501,16 @@ install_skill_if_missing() {
     return 0
   fi
   echo "[skills] installing $skill_name from $identifier"
-  hermes skills install "$identifier" --yes >/tmp/hermes-skill-install.log 2>&1 || {
+  timeout 30s hermes skills install "$identifier" --yes >/tmp/hermes-skill-install.log 2>&1 || {
     echo "[skills] install failed for $skill_name (will retry on next deploy)"
     tail -20 /tmp/hermes-skill-install.log || true
     return 0
   }
 }
 
+# Install third-party/optional skills in the background so a slow registry
+# can never hold the Telegram gateway's health check hostage.
+(
 # Official / bundled knowledge and web capabilities.
 install_skill_if_missing qmd official/research/qmd
 install_skill_if_missing scrapling official/research/scrapling
@@ -543,8 +546,10 @@ install_skill_if_missing google-workspace amanning3390/hermeshub/skills/google-w
 
 # Run the native Hermes skill audit after installs. SkillSpector is available
 # on demand through the local skill-upgrader via uvx for extra third-party scans.
-hermes skills audit >/tmp/hermes-skills-audit.log 2>&1 || true
+timeout 45s hermes skills audit >/tmp/hermes-skills-audit.log 2>&1 || true
 echo "[skills] curated pack ready"
+) &
+echo "[skills] background installer started"
 # ---- END HASAN PERSONAL HERMES BOOTSTRAP v1 ----
 
 exec python /app/server.py
