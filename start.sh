@@ -71,19 +71,19 @@ sync_runtime_env_var LLM_MODEL
 sync_runtime_env_var GROQ_API_KEY
 sync_runtime_env_var OPENROUTER_API_KEY
 sync_runtime_env_var DEEPSEEK_API_KEY
+sync_runtime_env_var OLLAMA_API_KEY
 sync_runtime_env_var TELEGRAM_BOT_TOKEN
 sync_runtime_env_var TELEGRAM_ALLOW_ALL_USERS
 sync_runtime_env_var TELEGRAM_ALLOWED_USERS
 sync_runtime_env_var GATEWAY_ALLOW_ALL_USERS
 
 # Multi-provider model stack.
-# Groq is promoted to the main model automatically whenever GROQ_API_KEY is
-# configured. DeepSeek and OpenRouter remain available for fast in-chat
-# switching and automatic failover. No secret values are logged.
+# Priority: Ollama Cloud Gemma 4 main -> Groq GPT-OSS 120B -> DeepSeek V4 Pro
+# -> OpenRouter Auto. Each provider is only enabled when its own credential is
+# present. Model aliases let Telegram switch providers instantly with /model.
 python - <<'PY' || true
 import os
 from pathlib import Path
-
 import yaml
 
 home = Path("/data/.hermes")
@@ -120,10 +120,12 @@ def write_env_value(path, key, value):
     tmp.replace(path)
 
 env = read_env(env_path)
-for key in ("GROQ_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY"):
-    if os.getenv(key):
-        env[key] = os.getenv(key, "")
+for key in ("OLLAMA_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY"):
+    val = os.getenv(key, "").strip()
+    if val:
+        env[key] = val
 
+ollama_ready = bool(env.get("OLLAMA_API_KEY"))
 groq_ready = bool(env.get("GROQ_API_KEY"))
 openrouter_ready = bool(env.get("OPENROUTER_API_KEY"))
 deepseek_ready = bool(env.get("DEEPSEEK_API_KEY"))
@@ -135,26 +137,23 @@ except Exception:
 if not isinstance(data, dict):
     data = {}
 
-# Named custom Groq provider. Live model discovery keeps the list current while
-# the explicit models guarantee the two production GPT-OSS choices are present.
+# Groq is OpenAI-compatible and Hermes supports named custom providers.
 providers = data.get("providers")
 if not isinstance(providers, dict):
     providers = {}
-groq = providers.get("groq")
-if not isinstance(groq, dict):
-    groq = {}
-groq.update({
+providers["groq"] = {
     "api": "https://api.groq.com/openai/v1",
     "key_env": "GROQ_API_KEY",
     "discover_models": True,
     "models": ["openai/gpt-oss-120b", "openai/gpt-oss-20b"],
-})
-providers["groq"] = groq
+}
 data["providers"] = providers
 
 aliases = data.get("model_aliases")
 if not isinstance(aliases, dict):
     aliases = {}
+if ollama_ready:
+    aliases["gemma"] = {"provider": "ollama-cloud", "model": "gemma4:31b-cloud"}
 if groq_ready:
     aliases["groq"] = {"provider": "custom:groq", "model": "openai/gpt-oss-120b"}
     aliases["fast"] = {"provider": "custom:groq", "model": "openai/gpt-oss-20b"}
@@ -162,26 +161,31 @@ if deepseek_ready:
     aliases["deep"] = {"provider": "deepseek", "model": "deepseek-v4-pro"}
 if openrouter_ready:
     aliases["router"] = {"provider": "openrouter", "model": "openrouter/auto"}
-    aliases["gemini"] = {"provider": "openrouter", "model": "google/gemini-3.8-flash"}
 data["model_aliases"] = aliases
 
-# Automatic failover is conservative: direct DeepSeek first, OpenRouter Auto
-# second. That keeps normal costs predictable while still giving a broad
-# aggregator fallback if two direct providers are unavailable.
 fallbacks = []
+if groq_ready:
+    fallbacks.append({"provider": "custom:groq", "model": "openai/gpt-oss-120b"})
 if deepseek_ready:
     fallbacks.append({"provider": "deepseek", "model": "deepseek-v4-pro"})
 if openrouter_ready:
     fallbacks.append({"provider": "openrouter", "model": "openrouter/auto"})
-if fallbacks:
-    data["fallback_providers"] = fallbacks
+data["fallback_providers"] = fallbacks
 
-# Groq becomes the default only once a real key exists. Until then the current
-# working model is preserved, so merely deploying this support cannot break the bot.
-if groq_ready:
-    model = data.get("model")
-    if not isinstance(model, dict):
-        model = {}
+model = data.get("model")
+if not isinstance(model, dict):
+    model = {}
+
+# Ollama Cloud Gemma 4 is the requested main model whenever its key exists.
+# Otherwise preserve the current working provider instead of breaking startup.
+if ollama_ready:
+    model["provider"] = "ollama-cloud"
+    model["default"] = "gemma4:31b-cloud"
+    for stale in ("base_url", "api_key", "api", "api_mode"):
+        model.pop(stale, None)
+    data["model"] = model
+    write_env_value(env_path, "LLM_MODEL", "gemma4:31b-cloud")
+elif groq_ready:
     model["provider"] = "custom:groq"
     model["default"] = "openai/gpt-oss-120b"
     for stale in ("base_url", "api_key", "api", "api_mode"):
@@ -192,13 +196,22 @@ if groq_ready:
 cfg_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
 configured = []
-if groq_ready:
-    configured.append("groq")
-if openrouter_ready:
-    configured.append("openrouter")
-if deepseek_ready:
-    configured.append("deepseek")
-main = "groq/openai/gpt-oss-120b" if groq_ready else "existing"
+for name, ready in (
+    ("ollama-cloud", ollama_ready),
+    ("groq", groq_ready),
+    ("deepseek", deepseek_ready),
+    ("openrouter", openrouter_ready),
+):
+    if ready:
+        configured.append(name)
+
+if ollama_ready:
+    main = "ollama-cloud/gemma4:31b-cloud"
+elif groq_ready:
+    main = "groq/openai/gpt-oss-120b"
+else:
+    main = "existing"
+
 print(
     f"[provider-stack] configured={','.join(configured) or 'none'} "
     f"main={main} aliases={','.join(sorted(aliases)) or 'none'} "
