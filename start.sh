@@ -162,6 +162,7 @@ if deepseek_ready:
     aliases["deep"] = {"provider": "deepseek", "model": "deepseek-v4-pro"}
 if openrouter_ready:
     aliases["router"] = {"provider": "openrouter", "model": "openrouter/auto"}
+    aliases["gemini"] = {"provider": "openrouter", "model": "google/gemini-3.8-flash"}
 data["model_aliases"] = aliases
 
 # Automatic failover is conservative: direct DeepSeek first, OpenRouter Auto
