@@ -123,6 +123,25 @@ RUN printf 'docker\n' > /opt/hermes-agent/.install_method
 # Same trap for any other package we might pin separately: on a version bump,
 # grep the new pyproject's core dependencies for anything this Dockerfile pins.
 
+
+# Pin the curated third-party skill sources into the image. Runtime skill-hub
+# fetches can be slow/flaky on Railway; build-time Git fetches are deterministic.
+RUN set -eux; \
+    mkdir -p /opt/vendor/superpowers /opt/vendor/gstack /opt/vendor/planning-with-files /opt/vendor/hermeshub; \
+    git -C /opt/vendor/superpowers init; \
+    git -C /opt/vendor/superpowers fetch --depth 1 https://github.com/obra/superpowers.git b36e0829c6d0140e93cfef2ca599b1b07d4a7797; \
+    git -C /opt/vendor/superpowers checkout FETCH_HEAD; \
+    git -C /opt/vendor/gstack init; \
+    git -C /opt/vendor/gstack fetch --depth 1 https://github.com/garrytan/gstack.git a6b3a57512ca6d5c6aa5b68f74f736195021f96e; \
+    git -C /opt/vendor/gstack checkout FETCH_HEAD; \
+    git -C /opt/vendor/planning-with-files init; \
+    git -C /opt/vendor/planning-with-files fetch --depth 1 https://github.com/OthmanAdi/planning-with-files.git 2fbbd77ba9a74cddb9504285935ef9ae0837cdec; \
+    git -C /opt/vendor/planning-with-files checkout FETCH_HEAD; \
+    git -C /opt/vendor/hermeshub init; \
+    git -C /opt/vendor/hermeshub fetch --depth 1 https://github.com/amanning3390/hermeshub.git 7bd1fb508799cc536c767caf99edbc3e3d97ebd3; \
+    git -C /opt/vendor/hermeshub checkout FETCH_HEAD; \
+    rm -rf /opt/vendor/superpowers/.git /opt/vendor/gstack/.git /opt/vendor/planning-with-files/.git /opt/vendor/hermeshub/.git
+
 COPY requirements.txt /app/requirements.txt
 RUN uv pip install --system --no-cache -r /app/requirements.txt
 
