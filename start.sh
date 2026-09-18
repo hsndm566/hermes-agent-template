@@ -694,4 +694,20 @@ echo "[skills] curated pack ready"
 echo "[skills] background installer started"
 # ---- END HASAN PERSONAL HERMES BOOTSTRAP v2 ----
 
+
+# Final certification / ongoing lightweight boot verification.
+# Runs in the background so health checks and Telegram startup are never blocked.
+# First boot performs full agent + learning + backup + Telegram tests.
+# Second boot proves the /data sentinel survived a real redeploy.
+# Later boots perform only the cheap static integrity check.
+(
+  sleep 8
+  set +e
+  mkdir -p /data/.hermes/logs
+  python /app/personalization/scripts/final_certify.py 2>&1 | tee -a /data/.hermes/logs/final-certification.log
+  cert_rc=${PIPESTATUS[0]}
+  echo "[certification] runner exited rc=${cert_rc}"
+  exit 0
+) &
+
 exec python /app/server.py
