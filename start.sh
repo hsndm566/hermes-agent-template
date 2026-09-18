@@ -172,6 +172,32 @@ if openrouter_ready:
     fallbacks.append({"provider": "openrouter", "model": "openrouter/auto"})
 data["fallback_providers"] = fallbacks
 
+# Media pipeline:
+# - Gemma 4 Cloud handles image analysis for every chat model, so switching to
+#   text-only Groq/DeepSeek does not break Telegram photo understanding.
+# - Groq Whisper handles Telegram voice-note speech-to-text when the Groq key
+#   is available; otherwise Hermes keeps its existing/local STT behavior.
+if ollama_ready:
+    auxiliary = data.get("auxiliary")
+    if not isinstance(auxiliary, dict):
+        auxiliary = {}
+    vision = auxiliary.get("vision")
+    if not isinstance(vision, dict):
+        vision = {}
+    vision["provider"] = "ollama-cloud"
+    vision["model"] = "gemma4:31b-cloud"
+    auxiliary["vision"] = vision
+    data["auxiliary"] = auxiliary
+
+if groq_ready:
+    stt = data.get("stt")
+    if not isinstance(stt, dict):
+        stt = {}
+    stt["enabled"] = True
+    stt["provider"] = "groq"
+    stt["language"] = ""
+    data["stt"] = stt
+
 model = data.get("model")
 if not isinstance(model, dict):
     model = {}
@@ -215,7 +241,9 @@ else:
 print(
     f"[provider-stack] configured={','.join(configured) or 'none'} "
     f"main={main} aliases={','.join(sorted(aliases)) or 'none'} "
-    f"fallbacks={len(fallbacks)}",
+    f"fallbacks={len(fallbacks)} "
+    f"vision={'gemma4:31b-cloud' if ollama_ready else 'default'} "
+    f"stt={'groq' if groq_ready else 'default'}",
     flush=True,
 )
 PY
