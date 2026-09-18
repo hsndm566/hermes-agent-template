@@ -491,6 +491,25 @@ if not isinstance(memory, dict):
 memory["memory_enabled"] = True
 memory["user_profile_enabled"] = True
 memory["write_approval"] = False
+memory["nudge_interval"] = 10
+
+skills_cfg = data.setdefault("skills", {})
+if not isinstance(skills_cfg, dict):
+    skills_cfg = {}
+    data["skills"] = skills_cfg
+skills_cfg["write_approval"] = False
+skills_cfg["creation_nudge_interval"] = 12
+
+auxiliary = data.setdefault("auxiliary", {})
+if not isinstance(auxiliary, dict):
+    auxiliary = {}
+    data["auxiliary"] = auxiliary
+background_review = auxiliary.setdefault("background_review", {})
+if not isinstance(background_review, dict):
+    background_review = {}
+    auxiliary["background_review"] = background_review
+background_review["enabled"] = True
+
 display = data.setdefault("display", {})
 if not isinstance(display, dict):
     display = {}
