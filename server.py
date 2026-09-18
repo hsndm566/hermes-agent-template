@@ -1898,47 +1898,6 @@ async def set_active_model_via_hermes(
     return None
 
 
-async def provider_sentence_smoke_93aa71(request: Request):
-    tests = {
-        "gemma": ("gemma4:31b-cloud", "ollama-cloud", "GEMMA_SENTENCE_OK"),
-        "groq": ("openai/gpt-oss-120b", "custom:groq", "GROQ_SENTENCE_OK"),
-        "fast": ("openai/gpt-oss-20b", "custom:groq", "FAST_SENTENCE_OK"),
-        "deepseek": ("deepseek-v4-pro", "deepseek", "DEEPSEEK_SENTENCE_OK"),
-    }
-    label = (request.query_params.get("which") or "").strip().lower()
-    if label not in tests:
-        return JSONResponse({"ok": False, "error": "invalid_provider"}, status_code=400)
-    model, provider, token = tests[label]
-    env = build_hermes_env()
-    prompt = f"Write exactly one natural English sentence confirming this model is responding successfully, and end the sentence with the exact token {token}"
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "hermes", "-z", prompt,
-            "-m", model, "--provider", provider,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-            env=env,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=90)
-        text = stdout.decode("utf-8", errors="replace").strip()
-        return JSONResponse({
-            "ok": proc.returncode == 0 and token in text,
-            "exit_code": proc.returncode,
-            "provider": label,
-            "model": model,
-            "sentence": text[-1000:],
-            "token_found": token in text,
-        })
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        return JSONResponse({"ok": False, "provider": label, "model": model, "error": "timeout"})
-    except Exception as exc:
-        return JSONResponse({"ok": False, "provider": label, "model": model, "error": type(exc).__name__})
-
-
 # ── Route handlers ────────────────────────────────────────────────────────────
 async def page_index(request: Request):
     if err := guard(request): return err
@@ -3255,7 +3214,6 @@ ANY_METHOD = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
 routes = [
     # Public — no auth required.
     Route("/health",                            route_health),
-    Route("/provider-sentence-smoke-93aa71",    provider_sentence_smoke_93aa71),
     # Our sign-in lives under /setup/* so the bare /login path stays free.
     # hermes' own gated dashboard redirects unauthenticated requests there, and
     # a route of ours at /login would answer instead — the browser would bounce
