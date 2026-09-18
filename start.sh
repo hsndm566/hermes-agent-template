@@ -436,4 +436,115 @@ export HERMES_LAZY_INSTALL_TARGET=/data/.hermes/lazy-packages
 # Dashboard has no respawn supervisor every proxied page 503s until redeploy
 # while /setup and /health stay green. Setting it here would skip that pairing.
 
+# ---- HASAN PERSONAL HERMES BOOTSTRAP v1 ----
+# One-time personalization migration. Back up any existing identity/memory first,
+# then seed Hasan's curated baseline. The marker prevents future redeploys from
+# overwriting whatever Hermes learns or Hasan edits afterward.
+PERSONAL_MARKER="/data/.hermes/.hasan_personalization_v1"
+if [ ! -f "$PERSONAL_MARKER" ]; then
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  backup="/data/.hermes/backups/personalization-$stamp"
+  mkdir -p "$backup" /data/.hermes/memories /data/.hermes/knowledge /data/.hermes/skills
+
+  [ -f /data/.hermes/SOUL.md ] && cp /data/.hermes/SOUL.md "$backup/SOUL.md" || true
+  [ -f /data/.hermes/memories/USER.md ] && cp /data/.hermes/memories/USER.md "$backup/USER.md" || true
+  [ -f /data/.hermes/memories/MEMORY.md ] && cp /data/.hermes/memories/MEMORY.md "$backup/MEMORY.md" || true
+
+  cp /app/personalization/SOUL.md /data/.hermes/SOUL.md
+  cp /app/personalization/USER.md /data/.hermes/memories/USER.md
+  cp /app/personalization/MEMORY.md /data/.hermes/memories/MEMORY.md
+  cp /app/personalization/knowledge/hasan-operating-context.md /data/.hermes/knowledge/hasan-operating-context.md
+  cp -a /app/personalization/skills/. /data/.hermes/skills/
+
+  python - <<'PY' || true
+from pathlib import Path
+import yaml
+p = Path("/data/.hermes/config.yaml")
+try:
+    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+except Exception:
+    data = {}
+if not isinstance(data, dict):
+    data = {}
+memory = data.setdefault("memory", {})
+if not isinstance(memory, dict):
+    memory = {}
+    data["memory"] = memory
+memory["memory_enabled"] = True
+memory["user_profile_enabled"] = True
+memory["write_approval"] = False
+display = data.setdefault("display", {})
+if not isinstance(display, dict):
+    display = {}
+    data["display"] = display
+display["memory_notifications"] = "on"
+p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+PY
+
+  touch "$PERSONAL_MARKER"
+  echo "[personalization] Hasan personal Hermes v1 seeded; previous identity/memory backed up to $backup"
+fi
+
+mkdir -p /data/.hermes/wiki /data/.hermes/cache/uv
+export WIKI_PATH=/data/.hermes/wiki
+export PWF_PLAN_ROOT=/data/.hermes/plans
+export UV_CACHE_DIR=/data/.hermes/cache/uv
+sync_runtime_env_var WIKI_PATH
+sync_runtime_env_var PWF_PLAN_ROOT
+
+# Curated skill pack. These installs are idempotent: existing skills are kept,
+# so later edits/learning on the persistent volume are not overwritten.
+install_skill_if_missing() {
+  local skill_name="$1"
+  local identifier="$2"
+  if [ -d "/data/.hermes/skills/$skill_name" ]; then
+    return 0
+  fi
+  echo "[skills] installing $skill_name from $identifier"
+  hermes skills install "$identifier" --yes >/tmp/hermes-skill-install.log 2>&1 || {
+    echo "[skills] install failed for $skill_name (will retry on next deploy)"
+    tail -20 /tmp/hermes-skill-install.log || true
+    return 0
+  }
+}
+
+# Official / bundled knowledge and web capabilities.
+install_skill_if_missing qmd official/research/qmd
+install_skill_if_missing scrapling official/research/scrapling
+install_skill_if_missing publish-site official/web-development/publish-site
+
+# Long-task planning.
+install_skill_if_missing planning-with-files skills-sh/othmanadi/planning-with-files/planning-with-files
+
+# Superpowers: install the router plus the most useful engineering procedures.
+install_skill_if_missing using-superpowers skills-sh/obra/superpowers/using-superpowers
+install_skill_if_missing systematic-debugging skills-sh/obra/superpowers/systematic-debugging
+install_skill_if_missing test-driven-development skills-sh/obra/superpowers/test-driven-development
+install_skill_if_missing writing-plans skills-sh/obra/superpowers/writing-plans
+install_skill_if_missing executing-plans skills-sh/obra/superpowers/executing-plans
+install_skill_if_missing verification-before-completion skills-sh/obra/superpowers/verification-before-completion
+
+# gstack: broad founder/product/engineering operating modes.
+install_skill_if_missing gstack skills-sh/garrytan/gstack/gstack
+install_skill_if_missing plan-ceo-review skills-sh/garrytan/gstack/plan-ceo-review
+install_skill_if_missing plan-eng-review skills-sh/garrytan/gstack/plan-eng-review
+install_skill_if_missing design-review skills-sh/garrytan/gstack/design-review
+install_skill_if_missing review skills-sh/garrytan/gstack/review
+install_skill_if_missing qa skills-sh/garrytan/gstack/qa
+install_skill_if_missing investigate skills-sh/garrytan/gstack/investigate
+install_skill_if_missing ship skills-sh/garrytan/gstack/ship
+
+# Google Workspace community skill. It is usable once Google OAuth credentials
+# are configured for this Railway Hermes instance.
+install_skill_if_missing google-workspace amanning3390/hermeshub/skills/google-workspace
+
+# llm-wiki ships bundled with Hermes already. WIKI_PATH above puts its durable
+# knowledge base on the Railway volume.
+
+# Run the native Hermes skill audit after installs. SkillSpector is available
+# on demand through the local skill-upgrader via uvx for extra third-party scans.
+hermes skills audit >/tmp/hermes-skills-audit.log 2>&1 || true
+echo "[skills] curated pack ready"
+# ---- END HASAN PERSONAL HERMES BOOTSTRAP v1 ----
+
 exec python /app/server.py
