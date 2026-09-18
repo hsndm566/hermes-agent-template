@@ -436,11 +436,11 @@ export HERMES_LAZY_INSTALL_TARGET=/data/.hermes/lazy-packages
 # Dashboard has no respawn supervisor every proxied page 503s until redeploy
 # while /setup and /health stay green. Setting it here would skip that pairing.
 
-# ---- HASAN PERSONAL HERMES BOOTSTRAP v1 ----
+# ---- HASAN PERSONAL HERMES BOOTSTRAP v2 ----
 # One-time personalization migration. Back up any existing identity/memory first,
 # then seed Hasan's curated baseline. The marker prevents future redeploys from
 # overwriting whatever Hermes learns or Hasan edits afterward.
-PERSONAL_MARKER="/data/.hermes/.hasan_personalization_v1"
+PERSONAL_MARKER="/data/.hermes/.hasan_personalization_v2"
 if [ ! -f "$PERSONAL_MARKER" ]; then
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   backup="/data/.hermes/backups/personalization-$stamp"
@@ -500,7 +500,7 @@ p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 PY
 
   touch "$PERSONAL_MARKER"
-  echo "[personalization] Hasan personal Hermes v1 seeded; previous identity/memory backed up to $backup"
+  echo "[personalization] Hasan personal Hermes v2 seeded; previous identity/memory backed up to $backup"
 fi
 
 # Make newly bundled custom skills available on later upgrades too, while
@@ -623,6 +623,6 @@ timeout 45s hermes skills audit >/tmp/hermes-skills-audit.log 2>&1 || true
 echo "[skills] curated pack ready"
 ) &
 echo "[skills] background installer started"
-# ---- END HASAN PERSONAL HERMES BOOTSTRAP v1 ----
+# ---- END HASAN PERSONAL HERMES BOOTSTRAP v2 ----
 
 exec python /app/server.py
