@@ -485,6 +485,17 @@ PY
   echo "[personalization] Hasan personal Hermes v1 seeded; previous identity/memory backed up to $backup"
 fi
 
+# Make newly bundled custom skills available on later upgrades too, while
+# preserving any existing/learned version on the persistent volume.
+for src in /app/personalization/skills/*; do
+  [ -d "$src" ] || continue
+  name="$(basename "$src")"
+  if [ ! -e "/data/.hermes/skills/$name" ]; then
+    cp -a "$src" "/data/.hermes/skills/$name"
+    echo "[personalization] seeded missing bundled custom skill: $name"
+  fi
+done
+
 mkdir -p /data/.hermes/wiki /data/.hermes/cache/uv
 export WIKI_PATH=/data/.hermes/wiki
 export PWF_PLAN_ROOT=/data/.hermes/plans
@@ -501,7 +512,7 @@ install_skill_if_missing() {
     return 0
   fi
   echo "[skills] installing $skill_name from $identifier"
-  timeout 30s hermes skills install "$identifier" --yes >/tmp/hermes-skill-install.log 2>&1 || {
+  timeout 45s hermes skills install "$identifier" --yes >/tmp/hermes-skill-install.log 2>&1 || {
     echo "[skills] install failed for $skill_name (will retry on next deploy)"
     tail -20 /tmp/hermes-skill-install.log || true
     return 0
@@ -517,25 +528,36 @@ install_skill_if_missing scrapling official/research/scrapling
 install_skill_if_missing publish-site official/web-development/publish-site
 
 # Long-task planning.
-install_skill_if_missing planning-with-files skills-sh/othmanadi/planning-with-files/planning-with-files
+install_skill_if_missing planning-with-files OthmanAdi/planning-with-files/.hermes/skills/planning-with-files
+
+if [ ! -f /data/.hermes/.planning_with_files_plugin_v1 ]; then
+  echo "[plugins] installing native planning-with-files plugin"
+  if timeout 60s hermes plugins install OthmanAdi/planning-with-files/.hermes/plugins/planning-with-files --enable >/tmp/hermes-pwf-plugin.log 2>&1; then
+    touch /data/.hermes/.planning_with_files_plugin_v1
+    echo "[plugins] planning-with-files enabled"
+  else
+    echo "[plugins] planning-with-files plugin install failed (skill still available; retry next deploy)"
+    tail -20 /tmp/hermes-pwf-plugin.log || true
+  fi
+fi
 
 # Superpowers: install the router plus the most useful engineering procedures.
-install_skill_if_missing using-superpowers skills-sh/obra/superpowers/using-superpowers
-install_skill_if_missing systematic-debugging skills-sh/obra/superpowers/systematic-debugging
-install_skill_if_missing test-driven-development skills-sh/obra/superpowers/test-driven-development
-install_skill_if_missing writing-plans skills-sh/obra/superpowers/writing-plans
-install_skill_if_missing executing-plans skills-sh/obra/superpowers/executing-plans
-install_skill_if_missing verification-before-completion skills-sh/obra/superpowers/verification-before-completion
+install_skill_if_missing using-superpowers obra/superpowers/skills/using-superpowers
+install_skill_if_missing systematic-debugging obra/superpowers/skills/systematic-debugging
+install_skill_if_missing test-driven-development obra/superpowers/skills/test-driven-development
+install_skill_if_missing writing-plans obra/superpowers/skills/writing-plans
+install_skill_if_missing executing-plans obra/superpowers/skills/executing-plans
+install_skill_if_missing verification-before-completion obra/superpowers/skills/verification-before-completion
 
 # gstack: broad founder/product/engineering operating modes.
-install_skill_if_missing gstack skills-sh/garrytan/gstack/gstack
-install_skill_if_missing plan-ceo-review skills-sh/garrytan/gstack/plan-ceo-review
-install_skill_if_missing plan-eng-review skills-sh/garrytan/gstack/plan-eng-review
-install_skill_if_missing design-review skills-sh/garrytan/gstack/design-review
-install_skill_if_missing review skills-sh/garrytan/gstack/review
-install_skill_if_missing qa skills-sh/garrytan/gstack/qa
-install_skill_if_missing investigate skills-sh/garrytan/gstack/investigate
-install_skill_if_missing ship skills-sh/garrytan/gstack/ship
+install_skill_if_missing gstack garrytan/gstack
+install_skill_if_missing plan-ceo-review garrytan/gstack/plan-ceo-review
+install_skill_if_missing plan-eng-review garrytan/gstack/plan-eng-review
+install_skill_if_missing design-review garrytan/gstack/design-review
+install_skill_if_missing review garrytan/gstack/review
+install_skill_if_missing qa garrytan/gstack/qa
+install_skill_if_missing investigate garrytan/gstack/investigate
+install_skill_if_missing ship garrytan/gstack/ship
 
 # Google Workspace community skill. It is usable once Google OAuth credentials
 # are configured for this Railway Hermes instance.
