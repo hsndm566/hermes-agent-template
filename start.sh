@@ -514,6 +514,39 @@ for src in /app/personalization/skills/*; do
   fi
 done
 
+
+# Seed pinned third-party skills from the immutable image. Copy only when
+# missing so Hermes can edit/learn from its persistent copy without deploys
+# resetting it.
+seed_vendor_skill() {
+  local name="$1"
+  local src="$2"
+  if [ ! -e "/data/.hermes/skills/$name" ] && [ -d "$src" ]; then
+    cp -a "$src" "/data/.hermes/skills/$name"
+    echo "[skills] seeded pinned skill: $name"
+  fi
+}
+
+seed_vendor_skill planning-with-files /opt/vendor/planning-with-files/.hermes/skills/planning-with-files
+seed_vendor_skill using-superpowers /opt/vendor/superpowers/skills/using-superpowers
+seed_vendor_skill systematic-debugging /opt/vendor/superpowers/skills/systematic-debugging
+seed_vendor_skill test-driven-development /opt/vendor/superpowers/skills/test-driven-development
+seed_vendor_skill writing-plans /opt/vendor/superpowers/skills/writing-plans
+seed_vendor_skill executing-plans /opt/vendor/superpowers/skills/executing-plans
+seed_vendor_skill verification-before-completion /opt/vendor/superpowers/skills/verification-before-completion
+
+# gstack root skill plus the modes most useful for Hasan's founder/build flow.
+seed_vendor_skill gstack /opt/vendor/gstack
+seed_vendor_skill plan-ceo-review /opt/vendor/gstack/plan-ceo-review
+seed_vendor_skill plan-eng-review /opt/vendor/gstack/plan-eng-review
+seed_vendor_skill design-review /opt/vendor/gstack/design-review
+seed_vendor_skill review /opt/vendor/gstack/review
+seed_vendor_skill qa /opt/vendor/gstack/qa
+seed_vendor_skill investigate /opt/vendor/gstack/investigate
+seed_vendor_skill ship /opt/vendor/gstack/ship
+
+seed_vendor_skill google-workspace /opt/vendor/hermeshub/skills/google-workspace
+
 mkdir -p /data/.hermes/wiki /data/.hermes/cache/uv
 export WIKI_PATH=/data/.hermes/wiki
 export PWF_PLAN_ROOT=/data/.hermes/plans
@@ -550,7 +583,7 @@ install_skill_if_missing planning-with-files OthmanAdi/planning-with-files/.herm
 
 if [ ! -f /data/.hermes/.planning_with_files_plugin_v1 ]; then
   echo "[plugins] installing native planning-with-files plugin"
-  if timeout 60s hermes plugins install OthmanAdi/planning-with-files/.hermes/plugins/planning-with-files --enable >/tmp/hermes-pwf-plugin.log 2>&1; then
+  if timeout 60s hermes plugins install /opt/vendor/planning-with-files/.hermes/plugins/planning-with-files --enable >/tmp/hermes-pwf-plugin.log 2>&1; then
     touch /data/.hermes/.planning_with_files_plugin_v1
     echo "[plugins] planning-with-files enabled"
   else
