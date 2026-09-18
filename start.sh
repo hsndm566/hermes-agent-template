@@ -68,10 +68,143 @@ sync_runtime_env_var() {
 }
 
 sync_runtime_env_var LLM_MODEL
+sync_runtime_env_var GROQ_API_KEY
+sync_runtime_env_var OPENROUTER_API_KEY
+sync_runtime_env_var DEEPSEEK_API_KEY
 sync_runtime_env_var TELEGRAM_BOT_TOKEN
 sync_runtime_env_var TELEGRAM_ALLOW_ALL_USERS
 sync_runtime_env_var TELEGRAM_ALLOWED_USERS
 sync_runtime_env_var GATEWAY_ALLOW_ALL_USERS
+
+# Multi-provider model stack.
+# Groq is promoted to the main model automatically whenever GROQ_API_KEY is
+# configured. DeepSeek and OpenRouter remain available for fast in-chat
+# switching and automatic failover. No secret values are logged.
+python - <<'PY' || true
+import os
+from pathlib import Path
+
+import yaml
+
+home = Path("/data/.hermes")
+env_path = home / ".env"
+cfg_path = home / "config.yaml"
+
+def read_env(path):
+    out = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        out[k.strip()] = v.strip().strip('"').strip("'")
+    return out
+
+def write_env_value(path, key, value):
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    lines = [line for line in lines if not line.startswith(f"{key}=")]
+    lines.append(f"{key}={value}")
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass
+    tmp.replace(path)
+
+env = read_env(env_path)
+for key in ("GROQ_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY"):
+    if os.getenv(key):
+        env[key] = os.getenv(key, "")
+
+groq_ready = bool(env.get("GROQ_API_KEY"))
+openrouter_ready = bool(env.get("OPENROUTER_API_KEY"))
+deepseek_ready = bool(env.get("DEEPSEEK_API_KEY"))
+
+try:
+    data = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+except Exception:
+    data = {}
+if not isinstance(data, dict):
+    data = {}
+
+# Named custom Groq provider. Live model discovery keeps the list current while
+# the explicit models guarantee the two production GPT-OSS choices are present.
+providers = data.get("providers")
+if not isinstance(providers, dict):
+    providers = {}
+groq = providers.get("groq")
+if not isinstance(groq, dict):
+    groq = {}
+groq.update({
+    "api": "https://api.groq.com/openai/v1",
+    "key_env": "GROQ_API_KEY",
+    "discover_models": True,
+    "models": ["openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+})
+providers["groq"] = groq
+data["providers"] = providers
+
+aliases = data.get("model_aliases")
+if not isinstance(aliases, dict):
+    aliases = {}
+if groq_ready:
+    aliases["groq"] = {"provider": "custom:groq", "model": "openai/gpt-oss-120b"}
+    aliases["fast"] = {"provider": "custom:groq", "model": "openai/gpt-oss-20b"}
+if deepseek_ready:
+    aliases["deep"] = {"provider": "deepseek", "model": "deepseek-v4-pro"}
+if openrouter_ready:
+    aliases["router"] = {"provider": "openrouter", "model": "openrouter/auto"}
+data["model_aliases"] = aliases
+
+# Automatic failover is conservative: direct DeepSeek first, OpenRouter Auto
+# second. That keeps normal costs predictable while still giving a broad
+# aggregator fallback if two direct providers are unavailable.
+fallbacks = []
+if deepseek_ready:
+    fallbacks.append({"provider": "deepseek", "model": "deepseek-v4-pro"})
+if openrouter_ready:
+    fallbacks.append({"provider": "openrouter", "model": "openrouter/auto"})
+if fallbacks:
+    data["fallback_providers"] = fallbacks
+
+# Groq becomes the default only once a real key exists. Until then the current
+# working model is preserved, so merely deploying this support cannot break the bot.
+if groq_ready:
+    model = data.get("model")
+    if not isinstance(model, dict):
+        model = {}
+    model["provider"] = "custom:groq"
+    model["default"] = "openai/gpt-oss-120b"
+    for stale in ("base_url", "api_key", "api", "api_mode"):
+        model.pop(stale, None)
+    data["model"] = model
+    write_env_value(env_path, "LLM_MODEL", "openai/gpt-oss-120b")
+
+cfg_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+configured = []
+if groq_ready:
+    configured.append("groq")
+if openrouter_ready:
+    configured.append("openrouter")
+if deepseek_ready:
+    configured.append("deepseek")
+main = "groq/openai/gpt-oss-120b" if groq_ready else "existing"
+print(
+    f"[provider-stack] configured={','.join(configured) or 'none'} "
+    f"main={main} aliases={','.join(sorted(aliases)) or 'none'} "
+    f"fallbacks={len(fallbacks)}",
+    flush=True,
+)
+PY
 
 # Hermes has a second access-control layer on the platform adapter itself.
 # For Telegram DMs, an allow-all env flag alone is not sufficient when the
