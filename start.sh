@@ -450,10 +450,28 @@ if [ ! -f "$PERSONAL_MARKER" ]; then
   [ -f /data/.hermes/memories/USER.md ] && cp /data/.hermes/memories/USER.md "$backup/USER.md" || true
   [ -f /data/.hermes/memories/MEMORY.md ] && cp /data/.hermes/memories/MEMORY.md "$backup/MEMORY.md" || true
 
-  cp /app/personalization/SOUL.md /data/.hermes/SOUL.md
-  cp /app/personalization/USER.md /data/.hermes/memories/USER.md
-  cp /app/personalization/MEMORY.md /data/.hermes/memories/MEMORY.md
-  cp /app/personalization/knowledge/hasan-operating-context.md /data/.hermes/knowledge/hasan-operating-context.md
+  # Personal identity/context comes from private Railway variables. This keeps
+  # personal data out of the public deployment-template repository.
+  if [ -n "${HERMES_PERSONAL_SOUL:-}" ]; then
+    printf '%s\n' "$HERMES_PERSONAL_SOUL" > /data/.hermes/SOUL.md
+  elif [ -f /app/personalization/SOUL.md ]; then
+    cp /app/personalization/SOUL.md /data/.hermes/SOUL.md
+  fi
+  if [ -n "${HERMES_PERSONAL_USER:-}" ]; then
+    printf '%s\n' "$HERMES_PERSONAL_USER" > /data/.hermes/memories/USER.md
+  elif [ -f /app/personalization/USER.md ]; then
+    cp /app/personalization/USER.md /data/.hermes/memories/USER.md
+  fi
+  if [ -n "${HERMES_PERSONAL_MEMORY:-}" ]; then
+    printf '%s\n' "$HERMES_PERSONAL_MEMORY" > /data/.hermes/memories/MEMORY.md
+  elif [ -f /app/personalization/MEMORY.md ]; then
+    cp /app/personalization/MEMORY.md /data/.hermes/memories/MEMORY.md
+  fi
+  if [ -n "${HERMES_PERSONAL_KNOWLEDGE:-}" ]; then
+    printf '%s\n' "$HERMES_PERSONAL_KNOWLEDGE" > /data/.hermes/knowledge/hasan-operating-context.md
+  elif [ -f /app/personalization/knowledge/hasan-operating-context.md ]; then
+    cp /app/personalization/knowledge/hasan-operating-context.md /data/.hermes/knowledge/hasan-operating-context.md
+  fi
   cp -a /app/personalization/skills/. /data/.hermes/skills/
 
   python - <<'PY' || true
