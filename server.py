@@ -1898,36 +1898,6 @@ async def set_active_model_via_hermes(
     return None
 
 
-async def provider_smoke_7f4c1d2e(request: Request):
-    tests = [
-        ("ollama-cloud", "gemma4:31b-cloud", "ollama-cloud"),
-        ("groq", "openai/gpt-oss-120b", "custom:groq"),
-        ("deepseek", "deepseek-v4-pro", "deepseek"),
-    ]
-    results = {}
-    env = build_hermes_env()
-    for label, model, provider in tests:
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "hermes", "-z", "Reply with exactly PROVIDER_OK",
-                "-m", model, "--provider", provider,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-                env=env,
-            )
-            rc = await asyncio.wait_for(proc.wait(), timeout=90)
-            results[label] = {"ok": rc == 0, "exit_code": rc, "model": model}
-        except asyncio.TimeoutError:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-            results[label] = {"ok": False, "error": "timeout", "model": model}
-        except Exception as exc:
-            results[label] = {"ok": False, "error": type(exc).__name__, "model": model}
-    return JSONResponse({"ok": all(v.get("ok") for v in results.values()), "results": results})
-
-
 # ── Route handlers ────────────────────────────────────────────────────────────
 async def page_index(request: Request):
     if err := guard(request): return err
@@ -3244,7 +3214,6 @@ ANY_METHOD = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
 routes = [
     # Public — no auth required.
     Route("/health",                            route_health),
-    Route("/provider-smoke-7f4c1d2e",             provider_smoke_7f4c1d2e),
     # Our sign-in lives under /setup/* so the bare /login path stays free.
     # hermes' own gated dashboard redirects unauthenticated requests there, and
     # a route of ours at /login would answer instead — the browser would bounce
