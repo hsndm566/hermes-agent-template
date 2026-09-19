@@ -175,8 +175,8 @@ data["fallback_providers"] = fallbacks
 # Media pipeline:
 # - Gemma 4 Cloud handles image analysis for every chat model, so switching to
 #   text-only Groq/DeepSeek does not break Telegram photo understanding.
-# - Groq Whisper handles Telegram voice-note speech-to-text when the Groq key
-#   is available; otherwise Hermes keeps its existing/local STT behavior.
+# - Telegram voice notes use a fully local/open-source whisper.cpp command
+#   provider. No Groq/OpenAI speech API key is required.
 if ollama_ready:
     auxiliary = data.get("auxiliary")
     if not isinstance(auxiliary, dict):
@@ -189,23 +189,26 @@ if ollama_ready:
     auxiliary["vision"] = vision
     data["auxiliary"] = auxiliary
 
-if groq_ready:
-    stt = data.get("stt")
-    if not isinstance(stt, dict):
-        stt = {}
-    stt["enabled"] = True
-    stt["echo_transcripts"] = True
-    stt["provider"] = "groq"
-    # Auto-detect so Hasan can switch naturally between Arabic and English.
-    stt["language"] = ""
-    groq_stt = stt.get("groq")
-    if not isinstance(groq_stt, dict):
-        groq_stt = {}
-    # Prefer accuracy over the slightly faster Turbo model for personal voice notes.
-    groq_stt["model"] = "whisper-large-v3"
-    groq_stt["language"] = ""
-    stt["groq"] = groq_stt
-    data["stt"] = stt
+stt = data.get("stt")
+if not isinstance(stt, dict):
+    stt = {}
+stt["enabled"] = True
+stt["echo_transcripts"] = True
+stt["provider"] = "whispercpp"
+# The wrapper forces Whisper language auto-detection so Arabic, English, and
+# mixed voice notes do not depend on a cloud language hint.
+stt["language"] = ""
+stt_providers = stt.get("providers")
+if not isinstance(stt_providers, dict):
+    stt_providers = {}
+stt_providers["whispercpp"] = {
+    "type": "command",
+    "command": "/usr/local/bin/hermes-whisper-stt {input_path} {output_path}",
+    "format": "txt",
+    "timeout": 300,
+}
+stt["providers"] = stt_providers
+data["stt"] = stt
 
 model = data.get("model")
 if not isinstance(model, dict):
@@ -252,7 +255,7 @@ print(
     f"main={main} aliases={','.join(sorted(aliases)) or 'none'} "
     f"fallbacks={len(fallbacks)} "
     f"vision={'gemma4:31b-cloud' if ollama_ready else 'default'} "
-    f"stt={'groq/whisper-large-v3' if groq_ready else 'default'}",
+    f"stt=local/whisper.cpp-large-v3-turbo-q5_0",
     flush=True,
 )
 PY
