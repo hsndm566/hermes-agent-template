@@ -108,7 +108,8 @@ RUN printf 'docker\n' > /opt/hermes-agent/.install_method
 
 # Local open-source speech-to-text for Telegram voice notes.
 # Pin whisper.cpp for reproducible builds and bake a quantized multilingual
-# Whisper Large V3 Turbo model into the image so STT needs no external API key.
+# Whisper Small Q5_1 model into the image. It fits this service's 1 GB RAM limit
+# while avoiding any external speech API key.
 ARG WHISPER_CPP_REF=v1.9.4
 RUN git clone --depth 1 --branch ${WHISPER_CPP_REF} https://github.com/ggml-org/whisper.cpp.git /tmp/whisper.cpp && \
     cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build \
@@ -120,9 +121,9 @@ RUN git clone --depth 1 --branch ${WHISPER_CPP_REF} https://github.com/ggml-org/
     install -m 0755 /tmp/whisper.cpp/build/bin/whisper-cli /usr/local/bin/whisper-cli && \
     mkdir -p /opt/whisper-models && \
     curl -fL --retry 3 --retry-delay 2 \
-      -o /opt/whisper-models/ggml-large-v3-turbo-q5_0.bin \
-      https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin && \
-    echo "e050f7970618a659205450ad97eb95a18d69c9ee  /opt/whisper-models/ggml-large-v3-turbo-q5_0.bin" | sha1sum -c - && \
+      -o /opt/whisper-models/ggml-small-q5_1.bin \
+      https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin && \
+    echo "6fe57ddcfdd1c6b07cdcc73aaf620810ce5fc771  /opt/whisper-models/ggml-small-q5_1.bin" | sha1sum -c - && \
     rm -rf /tmp/whisper.cpp
 
 # firecrawl-anydoc (the PDF / legacy-Office reader behind read_file) is a CORE
