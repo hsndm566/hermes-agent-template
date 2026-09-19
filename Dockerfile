@@ -33,7 +33,7 @@ ENV HERMES_REF=${HERMES_REF}
 # `node >=22.22.0` + `npm <11.10.0 || >=11.17.0` is now a hard EBADENGINE build
 # failure, not a warning — setup_24.x bundles an npm that satisfies neither.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl ca-certificates git tini && \
+    apt-get install -y --no-install-recommends curl ca-certificates git tini build-essential cmake ffmpeg && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
@@ -106,6 +106,25 @@ RUN git clone --depth 1 --branch ${HERMES_REF} https://github.com/NousResearch/h
 # editable from /opt/hermes-agent.
 RUN printf 'docker\n' > /opt/hermes-agent/.install_method
 
+# Local open-source speech-to-text for Telegram voice notes.
+# Pin whisper.cpp for reproducible builds and bake a quantized multilingual
+# Whisper Large V3 Turbo model into the image so STT needs no external API key.
+ARG WHISPER_CPP_REF=v1.9.4
+RUN git clone --depth 1 --branch ${WHISPER_CPP_REF} https://github.com/ggml-org/whisper.cpp.git /tmp/whisper.cpp && \
+    cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DBUILD_SHARED_LIBS=OFF \
+      -DWHISPER_BUILD_TESTS=OFF \
+      -DWHISPER_BUILD_EXAMPLES=ON && \
+    cmake --build /tmp/whisper.cpp/build --config Release -j2 --target whisper-cli && \
+    install -m 0755 /tmp/whisper.cpp/build/bin/whisper-cli /usr/local/bin/whisper-cli && \
+    mkdir -p /opt/whisper-models && \
+    curl -fL --retry 3 --retry-delay 2 \
+      -o /opt/whisper-models/ggml-large-v3-turbo-q5_0.bin \
+      https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin && \
+    echo "e050f7970618a659205450ad97eb95a18d69c9ee  /opt/whisper-models/ggml-large-v3-turbo-q5_0.bin" | sha1sum -c - && \
+    rm -rf /tmp/whisper.cpp
+
 # firecrawl-anydoc (the PDF / legacy-Office reader behind read_file) is a CORE
 # dependency as of v2026.8.31 — pyproject.toml pins ==0.2.4 and exempts it from
 # [tool.uv] exclude-newer, so the main install above already has it.
@@ -152,7 +171,8 @@ COPY templates/ /app/templates/
 COPY personalization/ /app/personalization/
 COPY start.sh /app/start.sh
 COPY telegram_capture.py /app/telegram_capture.py
-RUN chmod +x /app/start.sh
+COPY scripts/hermes-whisper-stt.sh /usr/local/bin/hermes-whisper-stt
+RUN chmod +x /app/start.sh /usr/local/bin/hermes-whisper-stt
 
 ENV HOME=/data
 ENV HERMES_HOME=/data/.hermes
