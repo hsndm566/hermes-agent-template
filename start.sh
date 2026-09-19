@@ -257,6 +257,46 @@ print(
 )
 PY
 
+# Temporary one-shot STT transport diagnostic. It creates a tiny local WAV and
+# sends it through Hermes's real configured transcription dispatcher so startup
+# logs expose provider/auth/SDK failures without needing a Telegram replay.
+# No credentials or transcript content are printed.
+(
+  cd /opt/hermes-agent
+  python - <<'PY' || true
+import os
+import tempfile
+import wave
+
+try:
+    from tools.transcription_tools import transcribe_audio
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        path = tmp.name
+    try:
+        with wave.open(path, "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(16000)
+            wav.writeframes(b"\x00\x00" * 16000)
+        result = transcribe_audio(path, None, "gateway")
+        ok = bool(result.get("success"))
+        provider = str(result.get("provider") or "none")
+        error = str(result.get("error") or "")
+        print(
+            f"[stt-diagnostic] success={ok} provider={provider} "
+            f"error={error[:500]!r}",
+            flush=True,
+        )
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+except Exception as exc:
+    print(f"[stt-diagnostic] exception={type(exc).__name__}: {str(exc)[:500]}", flush=True)
+PY
+) &
+
 # Hermes has a second access-control layer on the platform adapter itself.
 # For Telegram DMs, an allow-all env flag alone is not sufficient when the
 # adapter's dm_policy remains pairing/allowlist. Make that policy explicitly
