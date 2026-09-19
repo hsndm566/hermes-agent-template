@@ -194,8 +194,17 @@ if groq_ready:
     if not isinstance(stt, dict):
         stt = {}
     stt["enabled"] = True
+    stt["echo_transcripts"] = True
     stt["provider"] = "groq"
+    # Auto-detect so Hasan can switch naturally between Arabic and English.
     stt["language"] = ""
+    groq_stt = stt.get("groq")
+    if not isinstance(groq_stt, dict):
+        groq_stt = {}
+    # Prefer accuracy over the slightly faster Turbo model for personal voice notes.
+    groq_stt["model"] = "whisper-large-v3"
+    groq_stt["language"] = ""
+    stt["groq"] = groq_stt
     data["stt"] = stt
 
 model = data.get("model")
@@ -243,7 +252,7 @@ print(
     f"main={main} aliases={','.join(sorted(aliases)) or 'none'} "
     f"fallbacks={len(fallbacks)} "
     f"vision={'gemma4:31b-cloud' if ollama_ready else 'default'} "
-    f"stt={'groq' if groq_ready else 'default'}",
+    f"stt={'groq/whisper-large-v3' if groq_ready else 'default'}",
     flush=True,
 )
 PY
