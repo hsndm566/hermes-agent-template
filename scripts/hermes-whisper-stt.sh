@@ -3,7 +3,7 @@ set -eu
 
 INPUT_PATH="${1:?missing input path}"
 OUTPUT_PATH="${2:?missing output path}"
-MODEL_PATH="/opt/whisper-models/ggml-large-v3-turbo-q5_0.bin"
+MODEL_PATH="/opt/whisper-models/ggml-small-q5_1.bin"
 
 WORK_DIR="$(mktemp -d)"
 cleanup() {
