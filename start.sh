@@ -260,6 +260,36 @@ print(
 )
 PY
 
+# Temporary one-shot end-to-end STT verification.
+# Replays the newest real Telegram audio cached on the persistent volume through
+# Hermes's own transcription dispatcher. Logs only metadata, never transcript text.
+(
+  sleep 8
+  cd /opt/hermes-agent
+  python - <<'PY' || true
+from pathlib import Path
+try:
+    from tools.transcription_tools import transcribe_audio
+    root = Path("/data/.hermes/cache/audio")
+    files = [p for p in root.rglob("*") if p.is_file()] if root.exists() else []
+    if not files:
+        print("[stt-e2e] source=none result=NO_CACHED_AUDIO", flush=True)
+    else:
+        src = max(files, key=lambda p: p.stat().st_mtime)
+        result = transcribe_audio(str(src), None, "gateway")
+        tx = str(result.get("transcript") or "")
+        print(
+            "[stt-e2e] "
+            f"source={src.name!r} success={bool(result.get('success'))} "
+            f"provider={str(result.get('provider') or 'none')!r} "
+            f"chars={len(tx)} error={str(result.get('error') or '')[:500]!r}",
+            flush=True,
+        )
+except Exception as exc:
+    print(f"[stt-e2e] exception={type(exc).__name__}: {str(exc)[:500]}", flush=True)
+PY
+) &
+
 # Hermes has a second access-control layer on the platform adapter itself.
 # For Telegram DMs, an allow-all env flag alone is not sufficient when the
 # adapter's dm_policy remains pairing/allowlist. Make that policy explicitly
