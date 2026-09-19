@@ -252,7 +252,7 @@ print(
     f"main={main} aliases={','.join(sorted(aliases)) or 'none'} "
     f"fallbacks={len(fallbacks)} "
     f"vision={'gemma4:31b-cloud' if ollama_ready else 'default'} "
-    f"stt={'groq' if groq_ready else 'default'}",
+    f"stt={'groq/whisper-large-v3' if groq_ready else 'default'}",
     flush=True,
 )
 PY
