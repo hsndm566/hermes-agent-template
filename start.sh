@@ -255,7 +255,7 @@ print(
     f"main={main} aliases={','.join(sorted(aliases)) or 'none'} "
     f"fallbacks={len(fallbacks)} "
     f"vision={'gemma4:31b-cloud' if ollama_ready else 'default'} "
-    f"stt=local/whisper.cpp-large-v3-turbo-q5_0",
+    f"stt=local/whisper.cpp-small-q5_1",
     flush=True,
 )
 PY
