@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import re
 from uuid import UUID,uuid4
@@ -14,21 +15,46 @@ from .evolution import evolution
 from .booking import business
 from .state_machine import handle
 from .utils import jid_to_phone
+from .worker import tick as reminder_tick, r as reminder_redis
 
 app=FastAPI(title='Saudi WhatsApp Booking',docs_url=None,redoc_url=None)
 r=Redis.from_url(settings.redis_url,decode_responses=True)
+reminder_task=None
+
+async def reminder_loop():
+    while True:
+        try:
+            await reminder_tick()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print('reminder tick failed', type(exc).__name__)
+        await asyncio.sleep(60)
 
 @app.on_event('startup')
 async def startup():
+    global reminder_task
     await connect_db()
-    # Redis is disposable on the Railway profile. Rebuild only the privileged
-    # tenant registry after a restart; all tenant data remains in PostgreSQL.
+    # Redis conversation state is disposable; durable customer preferences live
+    # in PostgreSQL. Rebuild the privileged tenant registry on every start.
     p=await get_pool()
     rows=await p.fetch('SELECT "businessId" FROM businesses')
     if rows:
         await r.sadd('platform:business_ids', *[str(x["businessId"]) for x in rows])
+    reminder_task=asyncio.create_task(reminder_loop())
+
 @app.on_event('shutdown')
-async def shutdown(): await close_db(); await r.aclose()
+async def shutdown():
+    global reminder_task
+    if reminder_task:
+        reminder_task.cancel()
+        try:
+            await reminder_task
+        except asyncio.CancelledError:
+            pass
+    await reminder_redis.aclose()
+    await close_db()
+    await r.aclose()
 async def dependency_checks():
     checks={
         'postgres':False,
