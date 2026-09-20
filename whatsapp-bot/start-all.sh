@@ -45,7 +45,7 @@ su postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='evolution'\
 if [[ "$FRESH_PG" == "1" && -n "${WA_PERSIST_URL:-}" && -n "${WA_PERSIST_KEY:-}" && -n "${WA_BACKUP_SECRET:-}" ]]; then
   echo "[startup] Restoring persistent PostgreSQL snapshots"
   cd /app
-  python -m app.persistence restore
+  python -m app.persistence restore || echo "[startup] Persistence restore unavailable; continuing"
 fi
 
 redis-server --bind 127.0.0.1 --port 6379 --save "" --appendonly no --maxmemory 24mb --maxmemory-policy allkeys-lru --daemonize yes
@@ -110,7 +110,7 @@ fi
 
 if [[ -n "${WA_PERSIST_URL:-}" && -n "${WA_PERSIST_KEY:-}" && -n "${WA_BACKUP_SECRET:-}" ]]; then
   echo "[startup] Creating initial persistent snapshot"
-  python -m app.persistence backup
+  python -m app.persistence backup || echo "[startup] Initial persistence snapshot unavailable; continuing"
   echo "[startup] Persistence loop starting"
   python -m app.persistence loop >/tmp/persistence.log 2>&1 &
 fi
