@@ -14,12 +14,16 @@ class EvolutionClient:
             return r.json() if r.content else {}
 
     async def configure_webhook(self, instance: str):
+        # Evolution API v2.3.x requires webhook settings inside a "webhook"
+        # object and uses "byEvents" / "base64" field names.
         payload = {
-            "enabled": True,
-            "url": settings.evolution_webhook_url,
-            "webhookByEvents": False,
-            "webhookBase64": False,
-            "events": ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
+            "webhook": {
+                "enabled": True,
+                "url": settings.evolution_webhook_url,
+                "byEvents": False,
+                "base64": False,
+                "events": ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
+            }
         }
         return await self._request("POST", f"/webhook/set/{instance}", json=payload)
 
