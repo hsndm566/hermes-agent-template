@@ -20,7 +20,15 @@ export function LiveTestCard({ businessId, defaultPhone, onReady }: Props) {
   const [ok, setOk] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => { if (defaultPhone) setPhone(defaultPhone) }, [defaultPhone])
+  useEffect(() => {
+    if (defaultPhone) {
+      setPhone(defaultPhone)
+      return
+    }
+    api.clientDefaults().then((d) => {
+      if (d.test_phone) setPhone(d.test_phone)
+    }).catch(() => {})
+  }, [defaultPhone])
 
   const send = async () => {
     setError(null)
