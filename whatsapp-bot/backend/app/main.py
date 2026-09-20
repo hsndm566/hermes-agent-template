@@ -108,8 +108,22 @@ async def add_business(body:BusinessIn,_=Depends(require_admin)):
                 await c.execute('INSERT INTO services(id,"businessId",name_ar,name_en,duration_min,price,buffer_min) VALUES($1,$2,$3,$4,$5,$6,$7)',uuid4(),bid,s.name_ar,s.name_en,s.duration_min,Decimal(str(s.price)),s.buffer_min)
             for h in body.hours:
                 await c.execute('INSERT INTO working_hours(id,"businessId",day_of_week,open_time,close_time,is_closed,is_ramadan) VALUES($1,$2,$3,$4,$5,$6,$7)',uuid4(),bid,h.day_of_week,time.fromisoformat(h.open_time) if h.open_time else None,time.fromisoformat(h.close_time) if h.close_time else None,h.is_closed,h.is_ramadan)
-            defaults={'ramadan_mode':'false','prayer_buffer_enabled':'false','prayer_buffer_min':'30','slot_interval_min':'30','cancellation_policy_ar':'يمكنك الإلغاء قبل الموعد.','cancellation_policy_en':'You may cancel before the appointment.'}
-            for k,v in defaults.items(): await c.execute('INSERT INTO settings(id,"businessId",key,value) VALUES($1,$2,$3,$4)',uuid4(),bid,k,v)
+            defaults={
+                'ramadan_mode':'false',
+                'prayer_buffer_enabled':'false',
+                'prayer_buffer_min':'30',
+                'slot_interval_min':'30',
+                'cancellation_policy_ar':'يمكنك الإلغاء قبل الموعد.',
+                'cancellation_policy_en':'You may cancel before the appointment.',
+                'bot_name_ar':(body.bot_name_ar or body.name_ar).strip(),
+                'bot_name_en':(body.bot_name_en or body.name_en).strip(),
+                'bot_tone':body.bot_tone if body.bot_tone in {'friendly','professional','luxury','concise'} else 'friendly',
+                'welcome_ar':(body.welcome_ar or '').strip(),
+                'welcome_en':(body.welcome_en or '').strip(),
+                'language_prompt_enabled':'true'
+            }
+            for k,v in defaults.items():
+                await c.execute('INSERT INTO settings(id,"businessId",key,value) VALUES($1,$2,$3,$4)',uuid4(),bid,k,v)
     await r.sadd('platform:business_ids',str(bid))
     return {'id':str(bid),'instance':instance,'qr':qr_value(evo)}
 
