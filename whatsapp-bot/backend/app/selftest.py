@@ -77,7 +77,7 @@ async def run_customer_flow(bid, phone, language):
     first = await handle(bid, phone, "hello" if language == "en" else "السلام عليكم")
     assert "اختر اللغة" in first and "Choose your language" in first
 
-    menu = await handle(bid, phone, "2" if language == "en" else "1")
+    menu = await handle(bid, phone, "2" if language == "en" else "١")
     if language == "en":
         assert "Nora" in menu and "Choose a service" in menu
     else:
@@ -92,12 +92,28 @@ async def run_customer_flow(bid, phone, language):
     confirmation = await handle(bid, phone, "John" if language == "en" else "محمد")
     assert ("Booked ✅" in confirmation) if language == "en" else ("تم الحجز ✅" in confirmation)
 
+    location = await handle(bid, phone, "location" if language == "en" else "الموقع")
+    assert "maps.google.com" in location
+
+    hours = await handle(bid, phone, "working hours" if language == "en" else "ساعات العمل")
+    assert ("Working hours" in hours) if language == "en" else ("ساعات العمل" in hours)
+
+    prices = await handle(bid, phone, "prices" if language == "en" else "الأسعار")
+    assert ("Haircut" in prices) if language == "en" else ("قص شعر" in prices)
+
+    upcoming = await handle(bid, phone, "my appointment" if language == "en" else "موعدي")
+    assert ("Your next appointment" in upcoming) if language == "en" else ("موعدك القادم" in upcoming)
+
     return {
         "language_prompt": True,
         "service_menu": True,
         "slot_selection": True,
         "name_capture": True,
         "booking_confirmation": True,
+        "location_intent": True,
+        "hours_intent": True,
+        "prices_intent": True,
+        "appointment_lookup": True,
     }
 
 
