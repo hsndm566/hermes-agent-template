@@ -47,7 +47,7 @@ function resetBusinessDialog(){
   $('onboardingServices').appendChild(onboardingServiceRow({name_ar:'قص شعر',name_en:'Haircut',duration_min:30,price:60,buffer_min:10}));
   setOnboardStep(1);
 }
-$('openAddBusiness').onclick=$('emptyAddBusiness').onclick=async()=>{resetBusinessDialog();try{let d=await api('/api/client-defaults');if(d.test_phone)$('phone').value=d.test_phone}catch{}$('businessDialog').showModal()};
+$('openAddBusiness').onclick=$('emptyAddBusiness').onclick=()=>{resetBusinessDialog();$('businessDialog').showModal()};
 $('addOnboardingService').onclick=()=>$('onboardingServices').appendChild(onboardingServiceRow());
 
 function defaultHours(){let a=[];for(let ram of [false,true])for(let d=0;d<7;d++)a.push({day_of_week:d,open_time:'10:00',close_time:'22:00',is_closed:d===5,is_ramadan:ram});return a}
