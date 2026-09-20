@@ -14,7 +14,7 @@ from .schemas import LoginIn,BusinessIn,ServiceIn,HoursIn,SettingsIn,StaffIn,Bus
 from .evolution import evolution
 from .booking import business
 from .state_machine import handle
-from .utils import jid_to_phone
+from .utils import jid_to_phone, normalize_phone
 from .worker import tick as reminder_tick, r as reminder_redis
 
 app=FastAPI(title='Saudi WhatsApp Booking',docs_url=None,redoc_url=None)
@@ -251,6 +251,33 @@ async def appointments(bid:str,_=Depends(require_admin)):
     rows=await p.fetch('''SELECT a.*,s.name_ar,s.name_en,st.name_ar staff_ar,st.name_en staff_en,c.name customer_name FROM appointments a JOIN services s ON s."businessId"=a."businessId" AND s.id=a.service_id JOIN staff st ON st."businessId"=a."businessId" AND st.id=a.staff_id LEFT JOIN customers c ON c."businessId"=a."businessId" AND c.phone=a.customer_phone WHERE a."businessId"=$1 ORDER BY a.start_time DESC LIMIT 500''',uid)
     return [{k:(str(v) if isinstance(v,UUID) else v.isoformat() if isinstance(v,datetime) else v) for k,v in dict(x).items()} for x in rows]
 
+@app.post('/api/businesses/{bid}/test-message')
+async def live_test_message(bid:str,request:Request,_=Depends(require_admin)):
+    b=await tenant_or_404(bid)
+    if b['whatsapp_session_id'].startswith('test-'):
+        raise HTTPException(400,'Connect a real WhatsApp number first')
+    body=await request.json()
+    phone=normalize_phone(body.get('phone',''))
+    lang=(body.get('language') or 'ar').lower()
+    if not phone:
+        raise HTTPException(400,'A valid test phone is required')
+    state=await evolution.state(b['whatsapp_session_id'])
+    raw_state=(state.get('instance') or {}).get('state') if isinstance(state,dict) else None
+    if raw_state not in {'open','connected'}:
+        raise HTTPException(409,'WhatsApp is not connected')
+    text=('اختبار الاتصال ✅ أرسل أي رسالة لهذا الرقم الآن لإكمال اختبار الاستقبال.'
+          if lang=='ar' else
+          'Connection test ✅ Reply with any message now to complete the inbound-message test.')
+    await evolution.send_text(b['whatsapp_session_id'],phone,text)
+    return {'ok':True,'phone':phone,'language':lang,'state':raw_state}
+
+@app.get('/api/businesses/{bid}/conversation-test-status')
+async def conversation_test_status(bid:str,_=Depends(require_admin)):
+    await tenant_or_404(bid); uid=UUID(bid); p=await get_pool()
+    rows=await p.fetch('SELECT key,value FROM settings WHERE "businessId"=$1 AND key=ANY($2::text[])',uid,['last_inbound_at','last_inbound_phone','last_inbound_text'])
+    data={x['key']:x['value'] for x in rows}
+    return {'ok':bool(data.get('last_inbound_at')),'last_inbound_at':data.get('last_inbound_at'),'last_inbound_phone':data.get('last_inbound_phone'),'last_inbound_text':data.get('last_inbound_text')}
+
 @app.post('/webhook/whatsapp')
 async def whatsapp_webhook(request:Request):
     payload=await request.json(); event=(payload.get('event') or '').lower().replace('_','.')
@@ -268,6 +295,11 @@ async def whatsapp_webhook(request:Request):
     if not text: return {'ok':True}
     phone=jid_to_phone(key,data)
     if not phone: return JSONResponse({'ok':False,'error':'unknown sender'},400)
+    p=await get_pool()
+    now_iso=datetime.now().isoformat()
+    for sk,sv in [('last_inbound_at',now_iso),('last_inbound_phone',phone),('last_inbound_text',text[:160])]:
+        await p.execute('''INSERT INTO settings(id,"businessId",key,value) VALUES($1,$2,$3,$4)
+            ON CONFLICT ("businessId",key) DO UPDATE SET value=EXCLUDED.value''',uuid4(),bid,sk,sv)
     mid=key.get('id')
     if mid and not await r.set(f'wa:message:{bid}:{mid}','1',nx=True,ex=86400): return {'ok':True,'duplicate':True}
     lock=r.lock(f'wa:lock:{bid}:{phone}',timeout=15,blocking_timeout=5)
