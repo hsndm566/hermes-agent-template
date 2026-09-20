@@ -28,8 +28,7 @@ async def startup():
         await r.sadd('platform:business_ids', *[str(x["businessId"]) for x in rows])
 @app.on_event('shutdown')
 async def shutdown(): await close_db(); await r.aclose()
-@app.get('/health')
-async def health():
+async def dependency_checks():
     checks={'postgres':False,'redis':False,'evolution':False}
     try:
         p=await get_pool()
@@ -46,6 +45,16 @@ async def health():
             checks['evolution']=resp.status_code < 500
     except Exception:
         pass
+    return checks
+
+@app.get('/health')
+async def health():
+    checks=await dependency_checks()
+    return {'ok':True,'checks':checks}
+
+@app.get('/ready')
+async def ready():
+    checks=await dependency_checks()
     ok=all(checks.values())
     return JSONResponse({'ok':ok,'checks':checks},status_code=200 if ok else 503)
 
