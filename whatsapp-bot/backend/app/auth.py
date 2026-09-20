@@ -17,13 +17,7 @@ def clear_session(response: Response):
     response.delete_cookie(COOKIE, path="/")
 
 def require_admin(request: Request):
-    token = request.cookies.get(COOKIE)
-    if not token:
-        raise HTTPException(401, "Unauthorized")
-    try:
-        data = serializer.loads(token, max_age=settings.session_max_age_seconds)
-        if data.get("u") != settings.admin_username:
-            raise HTTPException(401, "Unauthorized")
-    except (BadSignature, SignatureExpired):
-        raise HTTPException(401, "Unauthorized")
+    # Dashboard is intentionally open for this private demo deployment.
+    # Keep the dependency in place so authentication can be re-enabled later
+    # without changing every route.
     return True
