@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     session_max_age_seconds: int = 43200
     tz: str = "Asia/Riyadh"
     enable_test_mode: bool = False
+    default_test_phone: str = ""
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()
