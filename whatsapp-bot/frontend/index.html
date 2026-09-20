@@ -143,6 +143,24 @@
           </div>
           <button id="saveProfile" class="primary saveBtn" data-i18n="saveProfile">حفظ بيانات المنشأة</button>
         </article>
+        <article class="card profileCard">
+          <span class="eyebrow" data-i18n="botPersonality">شخصية البوت</span>
+          <h3 data-i18n="botPersonalityHelp">خصص الاسم والأسلوب ورسالة الترحيب. العميل يختار العربية أو الإنجليزية في أول رسالة.</h3>
+          <div class="formGrid">
+            <label><span data-i18n="botNameAr">اسم البوت بالعربي</span><input id="settingsBotNameAr" placeholder="موعدي"></label>
+            <label><span data-i18n="botNameEn">Bot name in English</span><input id="settingsBotNameEn" dir="ltr" placeholder="Maw3idi"></label>
+            <label><span data-i18n="botTone">الأسلوب</span><select id="settingsBotTone">
+              <option value="friendly" data-i18n="toneFriendly">ودود</option>
+              <option value="professional" data-i18n="toneProfessional">احترافي</option>
+              <option value="luxury" data-i18n="toneLuxury">راقي</option>
+              <option value="concise" data-i18n="toneConcise">مختصر</option>
+            </select></label>
+          </div>
+          <div class="formGrid">
+            <label><span data-i18n="welcomeAr">رسالة ترحيب عربية اختيارية</span><textarea id="settingsWelcomeAr" rows="3" placeholder="اتركها فارغة لاستخدام الرسالة التلقائية"></textarea></label>
+            <label><span data-i18n="welcomeEn">Optional English welcome</span><textarea id="settingsWelcomeEn" rows="3" dir="ltr" placeholder="Leave blank to use the automatic greeting"></textarea></label>
+          </div>
+        </article>
         <div class="settingsGrid">
           <article class="card"><span class="eyebrow" data-i18n="automation">الأتمتة</span><h3 data-i18n="bookingRules">قواعد الحجز</h3>
             <label class="switchRow"><div><b data-i18n="ramadanMode">تفعيل جدول رمضان</b><small data-i18n="ramadanModeHelp">استخدم ساعات رمضان بدلاً من الجدول العادي.</small></div><input type="checkbox" id="ramadanMode"></label>
@@ -173,6 +191,26 @@
         <label><span data-i18n="mapsLink">رابط Google Maps</span><input id="maps" required placeholder="https://maps.google.com/..."></label>
       </div>
       <details><summary data-i18n="invoiceDetails">بيانات المنشأة والفوترة الاختيارية</summary><div class="formGrid"><label><span data-i18n="vat">الرقم الضريبي</span><input id="vat"></label><label><span data-i18n="cr">رقم السجل التجاري</span><input id="cr"></label><input id="lat" type="hidden"><input id="lng" type="hidden"></div></details>
+      <div class="divider"></div>
+      <div>
+        <span class="eyebrow" data-i18n="botPersonality">شخصية البوت</span>
+        <h3 data-i18n="botSetupHelp">اختر كيف يتحدث البوت مع عملاء هذه المنشأة.</h3>
+        <div class="formGrid">
+          <label><span data-i18n="botNameAr">اسم البوت بالعربي</span><input id="botNameAr" placeholder="موعدي"></label>
+          <label><span data-i18n="botNameEn">Bot name in English</span><input id="botNameEn" dir="ltr" placeholder="Maw3idi"></label>
+          <label><span data-i18n="botTone">الأسلوب</span><select id="botTone">
+            <option value="friendly" data-i18n="toneFriendly">ودود</option>
+            <option value="professional" data-i18n="toneProfessional">احترافي</option>
+            <option value="luxury" data-i18n="toneLuxury">راقي</option>
+            <option value="concise" data-i18n="toneConcise">مختصر</option>
+          </select></label>
+        </div>
+        <div class="formGrid">
+          <label><span data-i18n="welcomeAr">رسالة ترحيب عربية اختيارية</span><textarea id="welcomeAr" rows="3"></textarea></label>
+          <label><span data-i18n="welcomeEn">Optional English welcome</span><textarea id="welcomeEn" rows="3" dir="ltr"></textarea></label>
+        </div>
+        <p class="muted" data-i18n="languageChoiceHelp">أول رسالة من أي عميل جديد ستكون: اختر اللغة / Choose your language.</p>
+      </div>
       <div class="divider"></div>
       <div class="cardHead onboardingServicesHead">
         <div><h3 data-i18n="firstServices">الخدمات الأولى</h3><p class="muted" data-i18n="serviceInputHelp">أضف خدمة واحدة على الأقل. يمكنك إضافة المزيد لاحقاً.</p></div>
