@@ -1,3 +1,4 @@
+import hmac
 import asyncio
 import httpx
 import re
@@ -96,9 +97,21 @@ async def ready():
     return JSONResponse({'ok':ok,'checks':checks},status_code=200 if ok else 503)
 
 @app.post('/api/login')
-async def login(body:LoginIn,response:Response):
-    if not valid_credentials(body.username,body.password): raise HTTPException(401,'Invalid credentials')
-    issue_session(response); return {'ok':True}
+async def login(body:LoginIn,response:Response,request:Request):
+    forwarded=(request.headers.get('x-forwarded-for') or '').split(',')[0].strip()
+    client_ip=forwarded or (request.client.host if request.client else 'unknown')
+    limit_key=f'login:fail:{client_ip}:{body.username[:64]}'
+    failures=int(await r.get(limit_key) or 0)
+    if failures >= 5:
+        raise HTTPException(429,'Too many login attempts. Try again later.')
+    if not valid_credentials(body.username,body.password):
+        failures=await r.incr(limit_key)
+        if failures==1:
+            await r.expire(limit_key,900)
+        raise HTTPException(401,'Invalid credentials')
+    await r.delete(limit_key)
+    issue_session(response)
+    return {'ok':True}
 @app.post('/api/logout')
 async def logout(response:Response,_=Depends(require_admin)): clear_session(response); return {'ok':True}
 @app.get('/api/session')
@@ -297,6 +310,9 @@ async def conversation_test_status(bid:str,_=Depends(require_admin)):
 
 @app.post('/webhook/whatsapp')
 async def whatsapp_webhook(request:Request):
+    supplied=request.headers.get('x-webhook-secret','')
+    if not supplied or not hmac.compare_digest(supplied,settings.whatsapp_webhook_secret):
+        return JSONResponse({'ok':False,'error':'unauthorized webhook'},401)
     payload=await request.json(); event=(payload.get('event') or '').lower().replace('_','.')
     if event not in {'messages.upsert','messages-upsert'}: return {'ok':True}
     data=payload.get('data') or {}; key=data.get('key') or {}
