@@ -40,3 +40,13 @@ class BusinessProfileIn(BaseModel):
     cr_number: Optional[str]=None
 
 class SettingsIn(BaseModel): values:dict[str,str]
+
+
+class AppointmentSlotIn(BaseModel):
+    start: str
+    end: str
+    staff_id: str
+
+class AppointmentActionIn(BaseModel):
+    action: str
+    slot: Optional[AppointmentSlotIn] = None
