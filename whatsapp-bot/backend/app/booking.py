@@ -18,9 +18,17 @@ async def settings_map(bid):
     p=await get_pool(); rows=await p.fetch('SELECT key,value FROM settings WHERE "businessId"=$1', UUID(str(bid))); return {r['key']:r['value'] for r in rows}
 async def customer(bid, phone):
     p=await get_pool(); return await p.fetchrow('SELECT * FROM customers WHERE "businessId"=$1 AND phone=$2', UUID(str(bid)), phone)
-async def upsert_customer(bid, phone, name=None):
-    p=await get_pool(); return await p.fetchrow('''INSERT INTO customers(id,"businessId",phone,name) VALUES($1,$2,$3,$4)
-    ON CONFLICT ("businessId",phone) DO UPDATE SET name=COALESCE(EXCLUDED.name,customers.name) RETURNING *''', uuid4(), UUID(str(bid)), phone, name)
+async def upsert_customer(bid, phone, name=None, preferred_language=None):
+    p=await get_pool()
+    return await p.fetchrow('''INSERT INTO customers(id,"businessId",phone,name,preferred_language)
+    VALUES($1,$2,$3,$4,$5)
+    ON CONFLICT ("businessId",phone) DO UPDATE SET
+      name=COALESCE(EXCLUDED.name,customers.name),
+      preferred_language=COALESCE(EXCLUDED.preferred_language,customers.preferred_language)
+    RETURNING *''', uuid4(), UUID(str(bid)), phone, name, preferred_language)
+
+async def set_customer_language(bid, phone, preferred_language):
+    return await upsert_customer(bid, phone, preferred_language=preferred_language)
 
 async def available_slots(bid, service_id, exclude_appointment=None):
     p=await get_pool(); bid=UUID(str(bid)); sid=UUID(str(service_id)); now=datetime.now(TZ)
