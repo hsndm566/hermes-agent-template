@@ -1,7 +1,7 @@
 async function api(path,opt={}){const r=await fetch(path,{credentials:'same-origin',headers:{'Content-Type':'application/json',...(opt.headers||{})},...opt});if(r.status===401){showLogin();throw Error('unauthorized')}const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||d.error||r.statusText);return d}
 function showLogin(){$('loginCard').classList.remove('hidden');$('app').classList.add('hidden');$('logout').classList.add('hidden')}
-function showApp(){$('loginCard').classList.add('hidden');$('app').classList.remove('hidden');$('logout').classList.remove('hidden')}
-async function init(){applyLanguage();try{await api('/api/session');showApp();await loadBusinesses()}catch{showLogin()}}
+function showApp(){$('loginCard').classList.add('hidden');$('app').classList.remove('hidden');$('logout').classList.add('hidden')}
+async function init(){applyLanguage();showApp();await loadBusinesses()}
 $('login').onclick=async()=>{try{await api('/api/login',{method:'POST',body:JSON.stringify({username:$('user').value,password:$('pass').value})});$('loginMsg').textContent='';showApp();await loadBusinesses()}catch(e){$('loginMsg').textContent=lang==='ar'?'بيانات الدخول غير صحيحة.':'Incorrect login details.'}}
 $('pass').addEventListener('keydown',e=>{if(e.key==='Enter')$('login').click()});
 $('logout').onclick=async()=>{await api('/api/logout',{method:'POST'}).catch(()=>{});showLogin()};
