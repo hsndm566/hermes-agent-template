@@ -55,6 +55,9 @@ class EvolutionClient:
     async def state(self, instance: str):
         return await self._request("GET", f"/instance/connectionState/{instance}", timeout=15)
 
+    async def delete_instance(self, instance: str):
+        return await self._request("DELETE", f"/instance/delete/{instance}", timeout=20)
+
     async def send_text(self, instance: str, number: str, text: str):
         if instance.startswith("test-biz-"):
             return {"test": True, "text": text}
