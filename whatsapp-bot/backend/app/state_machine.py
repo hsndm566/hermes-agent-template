@@ -34,7 +34,7 @@ async def greeting(bid,lang):
     cfg=await booking.settings_map(bid)
     biz=await booking.business(bid)
     bot_name=(cfg.get('bot_name_ar') if lang=='ar' else cfg.get('bot_name_en')) or (biz['name_ar'] if lang=='ar' else biz['name_en'])
-    custom=(cfg.get('welcome_ar') if lang=='ar' else cfg.get('welcome_en') or '').strip()
+    custom=((cfg.get('welcome_ar') if lang=='ar' else cfg.get('welcome_en')) or '').strip()
     if custom:
         return custom
     tone=cfg.get('bot_tone','friendly')
@@ -84,7 +84,7 @@ async def handle(bid, phone, text):
     low=text.lower()
     st=await get_state(bid,phone)
     customer=await booking.customer(bid,phone)
-    saved_lang=customer['preferred_language'] if customer and customer.get('preferred_language') else None
+    saved_lang=customer['preferred_language'] if customer and customer['preferred_language'] else None
 
     if low in {'لغة','language','lang','change language','تغيير اللغة'}:
         await set_state(bid,phone,{'step':'language'})
