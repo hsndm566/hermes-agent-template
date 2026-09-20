@@ -40,9 +40,12 @@ async def dependency_checks():
     except Exception:
         pass
     try:
-        async with httpx.AsyncClient(timeout=3) as client:
-            resp=await client.get(settings.evolution_internal_url.rstrip('/') + '/')
-            checks['evolution']=resp.status_code < 500
+        async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
+            resp=await client.get(
+                settings.evolution_internal_url.rstrip('/') + '/instance/fetchInstances',
+                headers={'apikey': settings.evolution_api_key},
+            )
+            checks['evolution']=resp.status_code == 200
     except Exception:
         pass
     return checks
