@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <title>موعدي | WhatsApp Booking</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="toast" class="toast hidden" role="status"></div>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brandMark">م</div>
+      <div><h1>موعدي</h1><p data-i18n="brandSub">حجوزات واتساب للمنشآت</p></div>
+    </div>
+    <div class="topActions">
+      <button id="langToggle" class="iconBtn" aria-label="Language">EN</button>
+      <button id="logout" class="ghost hidden" data-i18n="logout">تسجيل الخروج</button>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section id="loginCard" class="authCard">
+      <div class="authIcon">م</div>
+      <h2 data-i18n="welcome">أهلاً بك</h2>
+      <p class="muted" data-i18n="loginHelp">ادخل لوحة التحكم لإدارة الحجوزات وربط واتساب.</p>
+      <label><span data-i18n="username">اسم المستخدم</span><input id="user" autocomplete="username" placeholder="admin"></label>
+      <label><span data-i18n="password">كلمة المرور</span><input id="pass" type="password" autocomplete="current-password" placeholder="••••••••"></label>
+      <button id="login" class="primary" data-i18n="login">دخول</button>
+      <p id="loginMsg" class="errorText"></p>
+    </section>
+
+    <div id="app" class="hidden">
+      <section class="workspaceBar">
+        <div>
+          <span class="eyebrow" data-i18n="currentBusiness">المنشأة الحالية</span>
+          <select id="businessSelect" aria-label="Business"></select>
+        </div>
+        <button id="openAddBusiness" class="primary compact" data-i18n="addBusiness">+ إضافة منشأة</button>
+      </section>
+
+      <nav class="tabs" aria-label="Navigation">
+        <button data-tab="overview" class="active" data-i18n="overview">الرئيسية</button>
+        <button data-tab="bookings" data-i18n="bookings">الحجوزات</button>
+        <button data-tab="services" data-i18n="services">الخدمات</button>
+        <button data-tab="staff" data-i18n="staffTab">الموظفون</button>
+        <button data-tab="hours" data-i18n="hours">ساعات العمل</button>
+        <button data-tab="settings" data-i18n="settings">الإعدادات</button>
+      </nav>
+
+      <section id="overview" class="panel active">
+        <div id="emptyState" class="emptyState hidden">
+          <div class="emptyIcon">1</div>
+          <h2 data-i18n="firstBusiness">أضف أول منشأة</h2>
+          <p data-i18n="firstBusinessHelp">أدخل اسم المنشأة وخدمة واحدة على الأقل. بعدها سيظهر QR لربط واتساب.</p>
+          <button class="primary" id="emptyAddBusiness" data-i18n="startSetup">ابدأ الإعداد</button>
+        </div>
+
+        <div id="overviewContent" class="hidden">
+          <div class="heroCard">
+            <div>
+              <span class="eyebrow" data-i18n="status">الحالة</span>
+              <h2 id="heroBusinessName">—</h2>
+              <p id="heroSub" class="muted">—</p>
+            </div>
+            <div id="waBadge" class="statusBadge waiting"><span></span><b data-i18n="checking">جاري التحقق</b></div>
+          </div>
+
+          <div class="statsGrid">
+            <article class="statCard"><span data-i18n="todayBookings">حجوزات اليوم</span><strong id="todayCount">0</strong></article>
+            <article class="statCard"><span data-i18n="upcomingBookings">الحجوزات القادمة</span><strong id="upcomingCount">0</strong></article>
+            <article class="statCard"><span data-i18n="servicesCount">الخدمات</span><strong id="servicesCount">0</strong></article>
+          </div>
+
+          <div class="contentGrid">
+            <article class="card">
+              <div class="cardHead"><div><span class="eyebrow" data-i18n="setup">الإعداد</span><h3 data-i18n="goLive">تشغيل المنشأة</h3></div></div>
+              <div class="checklist">
+                <div class="checkItem done"><span class="check">✓</span><div><b data-i18n="businessAdded">تمت إضافة المنشأة</b><small data-i18n="businessAddedHelp">الاسم والخدمات الأساسية محفوظة.</small></div></div>
+                <div id="waChecklist" class="checkItem"><span class="check">2</span><div><b data-i18n="connectWhatsapp">اربط واتساب</b><small data-i18n="connectWhatsappHelp">امسح رمز QR من الأجهزة المرتبطة في واتساب.</small></div></div>
+                <div id="readyChecklist" class="checkItem"><span class="check">3</span><div><b data-i18n="readyForCustomers">ابدأ استقبال العملاء</b><small data-i18n="readyHelp">بعد الاتصال يستطيع العملاء مراسلة الرقم مباشرة.</small></div></div>
+              </div>
+              <div id="qrWrap" class="qrBox hidden">
+                <img id="qr" alt="WhatsApp QR">
+                <div><h4 data-i18n="scanQr">امسح QR من واتساب</h4><p class="muted" data-i18n="scanHelp">واتساب ← الإعدادات ← الأجهزة المرتبطة ← ربط جهاز</p><button id="refreshQr" class="secondary compact" data-i18n="newQr">تحديث QR</button></div>
+              </div>
+            </article>
+
+            <article class="card">
+              <div class="cardHead"><div><span class="eyebrow" data-i18n="next">التالي</span><h3 data-i18n="nextBookings">أقرب الحجوزات</h3></div><button id="refreshOverview" class="textBtn" data-i18n="refresh">تحديث</button></div>
+              <div id="nextAppointments" class="appointmentList"></div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="bookings" class="panel">
+        <div class="card">
+          <div class="cardHead"><div><span class="eyebrow" data-i18n="manage">إدارة</span><h2 data-i18n="bookings">الحجوزات</h2></div><button id="loadBookings" class="secondary compact" data-i18n="refresh">تحديث</button></div>
+          <div class="tableWrap"><table><thead><tr><th data-i18n="customer">العميل</th><th data-i18n="phone">الهاتف</th><th data-i18n="service">الخدمة</th><th data-i18n="staff">الموظف</th><th data-i18n="time">الوقت</th><th data-i18n="bookingStatus">الحالة</th></tr></thead><tbody id="bookingRows"></tbody></table></div>
+        </div>
+      </section>
+
+      <section id="services" class="panel">
+        <div class="card">
+          <div class="cardHead"><div><span class="eyebrow" data-i18n="catalog">القائمة</span><h2 data-i18n="services">الخدمات</h2></div><button id="addService" class="secondary compact" data-i18n="addService">+ خدمة</button></div>
+          <p class="muted" data-i18n="serviceHelp">حدد الاسم والمدة والسعر. وقت التجهيز يمنع حجز موعد آخر مباشرة بعد الخدمة.</p>
+          <div id="serviceEditor"></div>
+          <button id="saveServices" class="primary saveBtn" data-i18n="saveChanges">حفظ التغييرات</button>
+        </div>
+      </section>
+
+      <section id="staff" class="panel">
+        <div class="card">
+          <div class="cardHead"><div><span class="eyebrow" data-i18n="team">الفريق</span><h2 data-i18n="staffTab">الموظفون</h2></div><button id="addStaff" class="secondary compact" data-i18n="addStaff">+ موظف</button></div>
+          <p class="muted" data-i18n="staffHelp">أضف الأشخاص الذين يمكن الحجز لديهم. يوزع النظام المواعيد على أول موظف متاح.</p>
+          <div id="staffEditor"></div>
+          <button id="saveStaff" class="primary saveBtn" data-i18n="saveStaff">حفظ الموظفين</button>
+        </div>
+      </section>
+
+      <section id="hours" class="panel">
+        <div class="card">
+          <div class="cardHead"><div><span class="eyebrow" data-i18n="schedule">الجدول</span><h2 data-i18n="hours">ساعات العمل</h2></div></div>
+          <div class="subTabs"><button data-hours-mode="normal" class="active" data-i18n="normalHours">الأيام العادية</button><button data-hours-mode="ramadan" data-i18n="ramadanHours">رمضان</button></div>
+          <div id="hoursEditor"></div>
+          <button id="saveHours" class="primary saveBtn" data-i18n="saveHours">حفظ ساعات العمل</button>
+        </div>
+      </section>
+
+      <section id="settings" class="panel">
+        <article class="card profileCard">
+          <span class="eyebrow" data-i18n="businessProfile">بيانات المنشأة</span>
+          <h3 data-i18n="businessProfileHelp">البيانات التي تظهر في الحجز والتأكيد</h3>
+          <div class="formGrid">
+            <label><span data-i18n="businessNameAr">اسم المنشأة بالعربي</span><input id="profileNameAr"></label>
+            <label><span data-i18n="businessNameEn">Business name in English</span><input id="profileNameEn" dir="ltr"></label>
+            <label><span data-i18n="ownerPhone">رقم واتساب</span><input id="profilePhone" dir="ltr"></label>
+            <label><span data-i18n="mapsLink">رابط Google Maps</span><input id="profileMaps" dir="ltr"></label>
+            <label><span data-i18n="vat">الرقم الضريبي</span><input id="profileVat"></label>
+            <label><span data-i18n="cr">رقم السجل التجاري</span><input id="profileCr"></label>
+          </div>
+          <button id="saveProfile" class="primary saveBtn" data-i18n="saveProfile">حفظ بيانات المنشأة</button>
+        </article>
+        <div class="settingsGrid">
+          <article class="card"><span class="eyebrow" data-i18n="automation">الأتمتة</span><h3 data-i18n="bookingRules">قواعد الحجز</h3>
+            <label class="switchRow"><div><b data-i18n="ramadanMode">تفعيل جدول رمضان</b><small data-i18n="ramadanModeHelp">استخدم ساعات رمضان بدلاً من الجدول العادي.</small></div><input type="checkbox" id="ramadanMode"></label>
+            <label class="switchRow"><div><b data-i18n="prayerBlock">حجب وقت الصلاة</b><small data-i18n="prayerBlockHelp">يمنع المواعيد حول أوقات الصلاة.</small></div><input type="checkbox" id="prayerEnabled"></label>
+            <label><span data-i18n="prayerBuffer">مدة الحجب حول الصلاة بالدقائق</span><input id="prayerBuffer" type="number" min="0" value="30"></label>
+            <label><span data-i18n="slotInterval">الفاصل بين الأوقات المتاحة بالدقائق</span><input id="slotInterval" type="number" min="5" value="30"></label>
+          </article>
+          <article class="card"><span class="eyebrow" data-i18n="policies">السياسات</span><h3 data-i18n="cancellation">سياسة الإلغاء</h3>
+            <label><span>العربية</span><textarea id="cancelAr" rows="4"></textarea></label>
+            <label><span>English</span><textarea id="cancelEn" rows="4" dir="ltr"></textarea></label>
+          </article>
+        </div>
+        <button id="saveSettings" class="primary saveBtn" data-i18n="saveSettings">حفظ الإعدادات</button>
+      </section>
+    </div>
+  </main>
+
+  <dialog id="businessDialog">
+    <form method="dialog" class="dialogCard" id="businessForm">
+      <button class="dialogClose" value="cancel" aria-label="Close">×</button>
+      <span class="eyebrow" data-i18n="quickSetup">إعداد سريع</span>
+      <h2 data-i18n="addBusinessTitle">أضف منشأة جديدة</h2>
+      <p class="muted" data-i18n="addBusinessHelp">نحتاج المعلومات الأساسية فقط. يمكنك تعديل كل شيء لاحقاً.</p>
+      <div class="formGrid">
+        <label><span data-i18n="businessNameAr">اسم المنشأة بالعربي</span><input id="nameAr" required placeholder="مثال: صالون الرياض"></label>
+        <label><span data-i18n="businessNameEn">Business name in English</span><input id="nameEn" required placeholder="Example: Riyadh Salon" dir="ltr"></label>
+        <label><span data-i18n="ownerPhone">رقم واتساب</span><input id="phone" required inputmode="tel" placeholder="9665XXXXXXXX"></label>
+        <label><span data-i18n="mapsLink">رابط Google Maps</span><input id="maps" required placeholder="https://maps.google.com/..."></label>
+      </div>
+      <details><summary data-i18n="invoiceDetails">بيانات المنشأة والفوترة الاختيارية</summary><div class="formGrid"><label><span data-i18n="vat">الرقم الضريبي</span><input id="vat"></label><label><span data-i18n="cr">رقم السجل التجاري</span><input id="cr"></label><input id="lat" type="hidden"><input id="lng" type="hidden"></div></details>
+      <div class="divider"></div>
+      <div class="cardHead onboardingServicesHead">
+        <div><h3 data-i18n="firstServices">الخدمات الأولى</h3><p class="muted" data-i18n="serviceInputHelp">أضف خدمة واحدة على الأقل. يمكنك إضافة المزيد لاحقاً.</p></div>
+        <button type="button" id="addOnboardingService" class="secondary compact" data-i18n="addService">+ خدمة</button>
+      </div>
+      <div id="onboardingServices"></div>
+      <div class="dialogActions"><button type="button" id="createBusiness" class="primary" data-i18n="createConnect">إنشاء وربط واتساب</button><button value="cancel" class="secondary" data-i18n="cancel">إلغاء</button></div>
+      <p id="createMsg"></p>
+    </form>
+  </dialog>
+
+  <script src="/i18n.js"></script>
+  <script src="/app-core.js"></script>
+  <script src="/app-admin.js"></script>
+  <script src="/app-settings.js"></script>
+</body>
+</html>
