@@ -82,6 +82,12 @@ echo "[startup] Booking migrations starting"
 python -m app.migrate
 echo "[startup] Booking migrations complete"
 
+if [[ "${RUN_E2E_SELFTEST:-false}" == "true" ]]; then
+  echo "[startup] Client-readiness selftest starting"
+  python -m app.selftest
+  echo "[startup] Client-readiness selftest passed"
+fi
+
 echo "[startup] Reminder worker starting"
 python -m app.worker >/tmp/worker.log 2>&1 &
 
