@@ -117,6 +117,10 @@ async def logout(response:Response,_=Depends(require_admin)): clear_session(resp
 @app.get('/api/session')
 async def session(_=Depends(require_admin)): return {'ok':True,'username':settings.admin_username}
 
+@app.get('/api/client-defaults')
+async def client_defaults(_=Depends(require_admin)):
+    return {'test_phone': normalize_phone(settings.default_test_phone) if settings.default_test_phone else ''}
+
 async def tenant_or_404(bid:str):
     try: uid=UUID(bid)
     except: raise HTTPException(404,'Business not found')
