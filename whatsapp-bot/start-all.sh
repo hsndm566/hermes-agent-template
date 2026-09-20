@@ -20,6 +20,7 @@ export DATABASE_SAVE_DATA_CHATS="${DATABASE_SAVE_DATA_CHATS:-false}"
 export DATABASE_SAVE_DATA_HISTORIC="${DATABASE_SAVE_DATA_HISTORIC:-false}"
 export SERVER_PORT="${SERVER_PORT:-8080}"
 export SERVER_URL="${SERVER_URL:-http://127.0.0.1:8080}"
+export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=192}"
 
 PGDATA=/tmp/pgdata
 mkdir -p "$PGDATA" /run/postgresql
@@ -29,7 +30,7 @@ if [[ ! -s "$PGDATA/PG_VERSION" ]]; then
   su postgres -c "initdb -D '$PGDATA' --auth-local=trust --auth-host=trust" >/tmp/initdb.log
 fi
 
-su postgres -c "postgres -D '$PGDATA' -c listen_addresses=127.0.0.1 -p 5432" >/tmp/postgres.log 2>&1 &
+su postgres -c "postgres -D '$PGDATA' -c listen_addresses=127.0.0.1 -p 5432 -c shared_buffers=16MB -c max_connections=20 -c work_mem=1MB -c maintenance_work_mem=8MB -c effective_cache_size=64MB" >/tmp/postgres.log 2>&1 &
 for i in {1..40}; do
   if pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1; then break; fi
   sleep 1
@@ -39,7 +40,7 @@ pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1 || { cat /tmp/postgres.log; exit
 su postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='booking'\"" | grep -q 1 || su postgres -c "createdb booking"
 su postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='evolution'\"" | grep -q 1 || su postgres -c "createdb evolution"
 
-redis-server --bind 127.0.0.1 --port 6379 --save "" --appendonly no --daemonize yes
+redis-server --bind 127.0.0.1 --port 6379 --save "" --appendonly no --maxmemory 24mb --maxmemory-policy allkeys-lru --daemonize yes
 
 echo "[startup] PostgreSQL ready"
 echo "[startup] Redis starting"
@@ -88,8 +89,6 @@ if [[ "${RUN_E2E_SELFTEST:-false}" == "true" ]]; then
   echo "[startup] Client-readiness selftest passed"
 fi
 
-echo "[startup] Reminder worker starting"
-python -m app.worker >/tmp/worker.log 2>&1 &
-
+echo "[startup] Reminder scheduler runs inside the API process"
 echo "[startup] Dashboard/API starting on port $PORT"
-exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --workers 1
+exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --workers 1 --loop asyncio --http h11
