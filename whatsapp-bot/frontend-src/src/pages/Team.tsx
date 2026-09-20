@@ -1,0 +1,14 @@
+import { Plus } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { api } from '../lib/api'
+import { useBusinesses } from '../lib/BusinessContext'
+import { useI18n } from '../lib/i18n'
+import type { StaffIn } from '../lib/types'
+export default function Team() {
+  const { lang } = useI18n(); const { selectedId } = useBusinesses(); const [staff, setStaff] = useState<StaffIn[]>([]); const [saving, setSaving] = useState(false); const [error, setError] = useState<string | null>(null)
+  useEffect(() => { if (selectedId) api.getBusiness(selectedId).then((d) => setStaff(d.staff)) }, [selectedId])
+  if (!selectedId) return <p className="text-sm text-ink-400">{lang === 'ar' ? 'اختر منشأة أولاً' : 'Select a business first'}</p>
+  async function save() { if (!selectedId) return; setError(null); setSaving(true); try { await api.putStaff(selectedId, staff); const fresh = await api.getBusiness(selectedId); setStaff(fresh.staff) } catch (e) { setError(e instanceof Error ? e.message : 'error') } finally { setSaving(false) } }
+  return <div className="space-y-4"><p className="text-sm text-ink-500">{lang === 'ar' ? 'يوزع النظام المواعيد على أول موظف متاح. لا يمكن تعطيل كل الموظفين.' : 'The system assigns bookings to the first available staff member. At least one must stay active.'}</p><div className="space-y-2">{staff.map((s, i) => <div key={i} className="grid grid-cols-1 gap-3 rounded-xl2 border border-ink-100 bg-surface p-4 sm:grid-cols-[1fr_1fr_auto]"><input placeholder={lang === 'ar' ? 'الاسم بالعربي' : 'Name (Arabic)'} className="input" value={s.name_ar} onChange={(e) => update(i, { name_ar: e.target.value })} /><input dir="ltr" placeholder="Name (English)" className="input" value={s.name_en} onChange={(e) => update(i, { name_en: e.target.value })} /><label className="flex items-center gap-2 text-sm text-ink-600"><input type="checkbox" checked={s.is_active} onChange={(e) => update(i, { is_active: e.target.checked })} className="h-4 w-4 rounded border-ink-300 text-moss-600" />{lang === 'ar' ? 'نشط' : 'Active'}</label></div>)}</div><button onClick={() => setStaff([...staff, { name_ar: '', name_en: '', is_active: true }])} className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-ink-200 px-4 py-2 text-sm font-medium text-ink-500 hover:border-moss-400 hover:text-moss-700"><Plus className="h-4 w-4" /> {lang === 'ar' ? 'إضافة موظف' : 'Add team member'}</button>{error && <p className="text-sm text-rose-600">{error}</p>}<div className="flex justify-end"><button onClick={save} disabled={saving} className="rounded-lg bg-moss-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-moss-700 disabled:opacity-60">{saving ? (lang === 'ar' ? 'جاري الحفظ...' : 'Saving…') : lang === 'ar' ? 'حفظ الفريق' : 'Save team'}</button></div></div>
+  function update(index: number, patch: Partial<StaffIn>) { setStaff((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s))) }
+}
