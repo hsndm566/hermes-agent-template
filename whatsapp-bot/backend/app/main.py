@@ -29,7 +29,13 @@ async def startup():
 @app.on_event('shutdown')
 async def shutdown(): await close_db(); await r.aclose()
 async def dependency_checks():
-    checks={'postgres':False,'redis':False,'evolution':False}
+    checks={
+        'postgres':False,
+        'redis':False,
+        'evolution':False,
+        'evolution_status':None,
+        'evolution_error_type':None,
+    }
     try:
         p=await get_pool()
         checks['postgres']=(await p.fetchval('SELECT 1'))==1
@@ -45,9 +51,10 @@ async def dependency_checks():
                 settings.evolution_internal_url.rstrip('/') + '/instance/fetchInstances',
                 headers={'apikey': settings.evolution_api_key},
             )
+            checks['evolution_status']=resp.status_code
             checks['evolution']=resp.status_code == 200
-    except Exception:
-        pass
+    except Exception as exc:
+        checks['evolution_error_type']=type(exc).__name__
     return checks
 
 @app.get('/health')
@@ -58,7 +65,7 @@ async def health():
 @app.get('/ready')
 async def ready():
     checks=await dependency_checks()
-    ok=all(checks.values())
+    ok=bool(checks['postgres'] and checks['redis'] and checks['evolution'])
     return JSONResponse({'ok':ok,'checks':checks},status_code=200 if ok else 503)
 
 @app.post('/api/login')
