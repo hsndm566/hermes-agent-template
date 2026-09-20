@@ -26,7 +26,9 @@ PGDATA=/tmp/pgdata
 mkdir -p "$PGDATA" /run/postgresql
 chown -R postgres:postgres "$PGDATA" /run/postgresql
 
+FRESH_PG=0
 if [[ ! -s "$PGDATA/PG_VERSION" ]]; then
+  FRESH_PG=1
   su postgres -c "initdb -D '$PGDATA' --auth-local=trust --auth-host=trust" >/tmp/initdb.log
 fi
 
@@ -39,6 +41,12 @@ pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1 || { cat /tmp/postgres.log; exit
 
 su postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='booking'\"" | grep -q 1 || su postgres -c "createdb booking"
 su postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='evolution'\"" | grep -q 1 || su postgres -c "createdb evolution"
+
+if [[ "$FRESH_PG" == "1" && -n "${WA_PERSIST_URL:-}" && -n "${WA_PERSIST_KEY:-}" && -n "${WA_BACKUP_SECRET:-}" ]]; then
+  echo "[startup] Restoring persistent PostgreSQL snapshots"
+  cd /app
+  python -m app.persistence restore
+fi
 
 redis-server --bind 127.0.0.1 --port 6379 --save "" --appendonly no --maxmemory 24mb --maxmemory-policy allkeys-lru --daemonize yes
 
@@ -87,6 +95,13 @@ if [[ "${RUN_E2E_SELFTEST:-false}" == "true" ]]; then
   echo "[startup] Client-readiness selftest starting"
   python -m app.selftest
   echo "[startup] Client-readiness selftest passed"
+fi
+
+if [[ -n "${WA_PERSIST_URL:-}" && -n "${WA_PERSIST_KEY:-}" && -n "${WA_BACKUP_SECRET:-}" ]]; then
+  echo "[startup] Creating initial persistent snapshot"
+  python -m app.persistence backup
+  echo "[startup] Persistence loop starting"
+  python -m app.persistence loop >/tmp/persistence.log 2>&1 &
 fi
 
 echo "[startup] Reminder scheduler runs inside the API process"
