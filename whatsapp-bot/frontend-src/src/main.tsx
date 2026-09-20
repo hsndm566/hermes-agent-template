@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { BrowserRouter } from 'react-router-dom'
+import { HashRouter } from 'react-router-dom'
 import App from './App'
 import { I18nProvider } from './lib/i18n'
 import { BusinessProvider } from './lib/BusinessContext'
@@ -13,9 +13,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <I18nProvider>
       <AuthGate loginScreen={(onSuccess) => <Login onSuccess={onSuccess} />}>
         <BusinessProvider>
-          <BrowserRouter>
+          <HashRouter>
             <App />
-          </BrowserRouter>
+          </HashRouter>
         </BusinessProvider>
       </AuthGate>
     </I18nProvider>
