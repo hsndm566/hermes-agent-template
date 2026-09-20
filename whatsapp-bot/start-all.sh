@@ -41,18 +41,49 @@ su postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='evolution'\
 
 redis-server --bind 127.0.0.1 --port 6379 --save "" --appendonly no --daemonize yes
 
-cd /evolution
-./Docker/scripts/deploy_database.sh >/tmp/evolution-migrate.log 2>&1
-npm run start:prod >/tmp/evolution.log 2>&1 &
+echo "[startup] PostgreSQL ready"
+echo "[startup] Redis starting"
+redis-cli ping >/dev/null
+echo "[startup] Redis ready"
 
-for i in {1..60}; do
-  if curl -fsS http://127.0.0.1:8080 >/dev/null 2>&1; then break; fi
+cd /evolution
+echo "[startup] Evolution migrations starting"
+if ! ( . ./Docker/scripts/deploy_database.sh ) >/tmp/evolution-migrate.log 2>&1; then
+  echo "[startup] Evolution migrations FAILED"
+  cat /tmp/evolution-migrate.log
+  exit 1
+fi
+echo "[startup] Evolution migrations complete"
+
+echo "[startup] Evolution API starting"
+npm run start:prod >/tmp/evolution.log 2>&1 &
+EVOLUTION_PID=$!
+
+for i in {1..90}; do
+  if curl -fsS http://127.0.0.1:8080 >/dev/null 2>&1; then
+    echo "[startup] Evolution API ready"
+    break
+  fi
+  if ! kill -0 "$EVOLUTION_PID" 2>/dev/null; then
+    echo "[startup] Evolution API exited early"
+    cat /tmp/evolution.log
+    exit 1
+  fi
   sleep 1
 done
-curl -fsS http://127.0.0.1:8080 >/dev/null 2>&1 || { cat /tmp/evolution.log; exit 1; }
+if ! curl -fsS http://127.0.0.1:8080 >/dev/null 2>&1; then
+  echo "[startup] Evolution API readiness timeout"
+  cat /tmp/evolution.log
+  exit 1
+fi
 
 cd /app
+echo "[startup] Booking migrations starting"
 python -m app.migrate
+echo "[startup] Booking migrations complete"
+
+echo "[startup] Reminder worker starting"
 python -m app.worker >/tmp/worker.log 2>&1 &
 
+echo "[startup] Dashboard/API starting on port $PORT"
 exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --workers 1
