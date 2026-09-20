@@ -1,5 +1,6 @@
 import hmac
 import asyncio
+import asyncpg
 import httpx
 import re
 from uuid import UUID,uuid4
@@ -11,9 +12,9 @@ from redis.asyncio import Redis
 from .config import settings
 from .db import connect_db,close_db,get_pool
 from .auth import valid_credentials,issue_session,clear_session,require_admin
-from .schemas import LoginIn,BusinessIn,ServiceIn,HoursIn,SettingsIn,StaffIn,BusinessProfileIn
+from .schemas import LoginIn,BusinessIn,ServiceIn,HoursIn,SettingsIn,StaffIn,BusinessProfileIn,AppointmentActionIn
 from .evolution import evolution
-from .booking import business
+from .booking import business, cancel as booking_cancel, reschedule as booking_reschedule
 from .state_machine import handle
 from .utils import jid_to_phone, normalize_phone
 from .worker import tick as reminder_tick, r as reminder_redis
@@ -267,6 +268,55 @@ async def appointments(bid:str,_=Depends(require_admin)):
     await tenant_or_404(bid); uid=UUID(bid); p=await get_pool()
     rows=await p.fetch('''SELECT a.*,s.name_ar,s.name_en,st.name_ar staff_ar,st.name_en staff_en,c.name customer_name FROM appointments a JOIN services s ON s."businessId"=a."businessId" AND s.id=a.service_id JOIN staff st ON st."businessId"=a."businessId" AND st.id=a.staff_id LEFT JOIN customers c ON c."businessId"=a."businessId" AND c.phone=a.customer_phone WHERE a."businessId"=$1 ORDER BY a.start_time DESC LIMIT 500''',uid)
     return [{k:(str(v) if isinstance(v,UUID) else v.isoformat() if isinstance(v,datetime) else v) for k,v in dict(x).items()} for x in rows]
+
+
+@app.patch('/api/businesses/{bid}/appointments/{aid}')
+async def update_appointment(bid:str,aid:str,body:AppointmentActionIn,_=Depends(require_admin)):
+    await tenant_or_404(bid); uid=UUID(bid); p=await get_pool()
+    try:
+        appt_uid=UUID(aid)
+    except Exception:
+        raise HTTPException(404,'Appointment not found')
+    existing=await p.fetchrow('SELECT * FROM appointments WHERE "businessId"=$1 AND id=$2',uid,appt_uid)
+    if not existing:
+        raise HTTPException(404,'Appointment not found')
+
+    if body.action=='cancel':
+        row=await booking_cancel(uid,appt_uid)
+    elif body.action=='reschedule':
+        if not body.slot:
+            raise HTTPException(400,'slot is required for reschedule')
+        try:
+            row=await booking_reschedule(uid,appt_uid,body.slot.model_dump())
+        except asyncpg.exceptions.ExclusionViolationError:
+            raise HTTPException(409,'That slot is no longer available')
+    elif body.action=='complete':
+        row=await p.fetchrow("UPDATE appointments SET status='completed' WHERE \"businessId\"=$1 AND id=$2 RETURNING *",uid,appt_uid)
+        await p.execute('UPDATE customers SET last_visit=$3 WHERE "businessId"=$1 AND phone=$2',uid,existing['customer_phone'],existing['end_time'])
+    elif body.action=='no_show':
+        row=await p.fetchrow("UPDATE appointments SET status='no_show' WHERE \"businessId\"=$1 AND id=$2 RETURNING *",uid,appt_uid)
+        await p.execute('UPDATE customers SET no_show_count=no_show_count+1 WHERE "businessId"=$1 AND phone=$2',uid,existing['customer_phone'])
+    else:
+        raise HTTPException(400,'Unknown action')
+
+    return {k:(str(v) if isinstance(v,UUID) else v.isoformat() if isinstance(v,datetime) else v) for k,v in dict(row).items()}
+
+@app.get('/api/businesses/{bid}/customers')
+async def customers_list(bid:str,_=Depends(require_admin)):
+    await tenant_or_404(bid); uid=UUID(bid); p=await get_pool()
+    rows=await p.fetch('SELECT * FROM customers WHERE "businessId"=$1 ORDER BY last_visit DESC NULLS LAST, phone',uid)
+    return [{k:(str(v) if isinstance(v,UUID) else v.isoformat() if isinstance(v,datetime) else v) for k,v in dict(x).items()} for x in rows]
+
+@app.delete('/api/businesses/{bid}/connection')
+async def disconnect(bid:str,_=Depends(require_admin)):
+    b=await tenant_or_404(bid)
+    if b['whatsapp_session_id'].startswith('test-'):
+        raise HTTPException(400,'Test-mode businesses have no real connection to disconnect')
+    try:
+        await evolution.logout(b['whatsapp_session_id'])
+    except Exception as e:
+        raise HTTPException(502,str(e))
+    return {'ok':True}
 
 @app.post('/api/businesses/{bid}/test-message')
 async def live_test_message(bid:str,request:Request,_=Depends(require_admin)):
