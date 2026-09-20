@@ -22,8 +22,8 @@ export SERVER_PORT="${SERVER_PORT:-8080}"
 export SERVER_URL="${SERVER_URL:-http://127.0.0.1:8080}"
 
 PGDATA=/tmp/pgdata
-mkdir -p "$PGDATA"
-chown -R postgres:postgres "$PGDATA"
+mkdir -p "$PGDATA" /run/postgresql
+chown -R postgres:postgres "$PGDATA" /run/postgresql
 
 if [[ ! -s "$PGDATA/PG_VERSION" ]]; then
   su postgres -c "initdb -D '$PGDATA' --auth-local=trust --auth-host=trust" >/tmp/initdb.log
