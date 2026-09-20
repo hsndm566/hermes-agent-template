@@ -26,8 +26,8 @@ def language_prompt():
 
 def language_choice(text):
     v=(text or '').strip().lower()
-    if v in {'1','ar','arabic','عربي','العربية','العربي'}: return 'ar'
-    if v in {'2','en','english','انجليزي','إنجليزي','الانجليزية','الإنجليزية'}: return 'en'
+    if v in {'1','١','ar','arabic','عربي','العربية','العربي'}: return 'ar'
+    if v in {'2','٢','en','english','انجليزي','إنجليزي','الانجليزية','الإنجليزية'}: return 'en'
     return None
 
 async def greeting(bid,lang):
@@ -67,12 +67,36 @@ async def service_menu(bid,lang):
     return '\n'.join(lines), rows
 
 def slots_text(slots,lang):
+    ar_days=['الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت','الأحد']
     lines=[t(lang,'الأوقات المتاحة خلال 7 أيام:','Available times in the next 7 days:')]
     for i,s in enumerate(slots,1):
         d=datetime.fromisoformat(s['start']).astimezone(TZ)
-        lines.append(f"{i}. {d.strftime('%a %d/%m - %H:%M')}")
+        label=f"{ar_days[d.weekday()]} {d.strftime('%d/%m - %H:%M')}" if lang=='ar' else d.strftime('%a %d/%m - %H:%M')
+        lines.append(f"{i}. {label}")
     lines.append(t(lang,'اكتب رقم الموعد.','Reply with the slot number.'))
     return '\n'.join(lines)
+
+async def hours_text(bid,lang):
+    cfg=await booking.settings_map(bid)
+    ramadan=cfg.get('ramadan_mode','false')=='true'
+    rows=await booking.working_hours(bid,ramadan)
+    ar_days=['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت']
+    en_days=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
+    lines=[t(lang,'ساعات العمل:','Working hours:')]
+    for row in rows:
+        day=(ar_days if lang=='ar' else en_days)[row['day_of_week']]
+        if row['is_closed']:
+            lines.append(f"{day}: {t(lang,'مغلق','Closed')}")
+        else:
+            lines.append(f"{day}: {row['open_time'].strftime('%H:%M')}–{row['close_time'].strftime('%H:%M')}")
+    return '\n'.join(lines)
+
+async def appointment_text(bid,phone,lang):
+    ap=await booking.upcoming(bid,phone)
+    if not ap:
+        return t(lang,'لا يوجد لديك حجز قادم.','You have no upcoming appointment.')
+    d=ap['start_time'].astimezone(TZ)
+    return t(lang,f"موعدك القادم يوم {d.strftime('%d/%m')} الساعة {d.strftime('%H:%M')}.",f"Your next appointment is on {d.strftime('%d/%m')} at {d.strftime('%H:%M')}.")
 
 async def begin_booking(bid,phone,lang):
     menu,_=await service_menu(bid,lang)
@@ -105,6 +129,25 @@ async def handle(bid, phone, text):
     if st and not st.get('lang'):
         st['lang']=lang
         await set_state(bid,phone,st)
+
+    if low in {'الموقع','موقع','وين الموقع','العنوان','location','address','where are you'}:
+        biz=await booking.business(bid)
+        return t(lang,'هذا موقعنا:','Our location:')+'\n'+biz['maps_url']
+
+    if low in {'الأسعار','الاسعار','الأسعار؟','الخدمات','الخدمات؟','prices','price','services','menu'}:
+        menu,_=await service_menu(bid,lang)
+        return menu
+
+    if low in {'ساعات العمل','اوقات العمل','أوقات العمل','متى تفتحون','hours','opening hours','working hours'}:
+        return await hours_text(bid,lang)
+
+    if low in {'موعدي','حجزي','الحجز','my appointment','my booking','appointment'}:
+        return await appointment_text(bid,phone,lang)
+
+    if low in {'مساعدة','help','options','القائمة'}:
+        menu,_=await service_menu(bid,lang)
+        commands=t(lang,'يمكنك أيضاً كتابة: الموقع، ساعات العمل، موعدي، تغيير، إلغاء، لغة.','You can also type: location, working hours, my appointment, change, cancel, language.')
+        return commands+'\n\n'+menu
 
     if low in {'إلغاء','الغاء','cancel'}:
         ap=await booking.upcoming(bid,phone)
