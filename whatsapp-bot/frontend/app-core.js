@@ -13,18 +13,45 @@ function onboardingServiceRow(s={}){
   div.querySelector('.onboardingDelete').onclick=()=>{if(document.querySelectorAll('#onboardingServices .onboardingServiceRow').length>1)div.remove()};
   return div;
 }
+let onboardingStep=1;
+function setOnboardStep(step){
+  onboardingStep=Math.max(1,Math.min(3,step));
+  document.querySelectorAll('[data-onboard-step]').forEach(x=>x.classList.toggle('active',+x.dataset.onboardStep===onboardingStep));
+  document.querySelectorAll('[data-onboard-dot]').forEach(x=>x.classList.toggle('active',+x.dataset.onboardDot<=onboardingStep));
+  $('onboardBack').classList.toggle('hidden',onboardingStep===1);
+  $('onboardNext').classList.toggle('hidden',onboardingStep===3);
+  $('createBusiness').classList.toggle('hidden',onboardingStep!==3);
+  const labels=lang==='ar'?['بيانات المنشأة','شخصية البوت','الخدمات']:['Business details','Bot personality','Services'];
+  $('onboardStepLabel').textContent=labels[onboardingStep-1];
+}
+function validateOnboardStep(){
+  if(onboardingStep===1){
+    if(!$('nameAr').value.trim()||!$('nameEn').value.trim()||!normalizePhone($('phone').value)||!$('maps').value.trim())
+      throw Error(lang==='ar'?'أكمل بيانات المنشأة المطلوبة.':'Complete the required business details.');
+  }
+  if(onboardingStep===3){
+    let rows=[...document.querySelectorAll('#onboardingServices .onboardingServiceRow')];
+    if(!rows.some(r=>r.querySelector('.o-ar').value.trim()&&r.querySelector('.o-en').value.trim()))
+      throw Error(lang==='ar'?'أضف خدمة واحدة على الأقل.':'Add at least one service.');
+  }
+  return true;
+}
+$('onboardNext').onclick=()=>{try{validateOnboardStep();setOnboardStep(onboardingStep+1)}catch(e){toast(e.message,true)}};
+$('onboardBack').onclick=()=>setOnboardStep(onboardingStep-1);
+
 function resetBusinessDialog(){
   $('businessForm').reset();
   $('createMsg').textContent='';
   $('botTone').value='friendly';
   $('onboardingServices').innerHTML='';
   $('onboardingServices').appendChild(onboardingServiceRow({name_ar:'قص شعر',name_en:'Haircut',duration_min:30,price:60,buffer_min:10}));
+  setOnboardStep(1);
 }
 $('openAddBusiness').onclick=$('emptyAddBusiness').onclick=()=>{resetBusinessDialog();$('businessDialog').showModal()};
 $('addOnboardingService').onclick=()=>$('onboardingServices').appendChild(onboardingServiceRow());
 
 function defaultHours(){let a=[];for(let ram of [false,true])for(let d=0;d<7;d++)a.push({day_of_week:d,open_time:'10:00',close_time:'22:00',is_closed:d===5,is_ramadan:ram});return a}
-$('createBusiness').onclick=async()=>{let btn=$('createBusiness');try{btn.disabled=true;btn.textContent=lang==='ar'?'جاري الإنشاء...':'Creating...';let sv=[...document.querySelectorAll('#onboardingServices .onboardingServiceRow')].map(r=>({name_ar:r.querySelector('.o-ar').value.trim(),name_en:r.querySelector('.o-en').value.trim(),duration_min:+r.querySelector('.o-duration').value,price:+r.querySelector('.o-price').value,buffer_min:+r.querySelector('.o-buffer').value})).filter(x=>x.name_ar&&x.name_en);if(!sv.length||sv.some(x=>!x.duration_min||x.duration_min<5||Number.isNaN(x.price)||x.price<0))throw Error(lang==='ar'?'تحقق من بيانات الخدمات.':'Check the service details.');let body={name_ar:$('nameAr').value.trim(),name_en:$('nameEn').value.trim(),phone:normalizePhone($('phone').value),maps_url:$('maps').value.trim(),latitude:null,longitude:null,vat_number:$('vat').value||null,cr_number:$('cr').value||null,bot_name_ar:$('botNameAr').value.trim()||null,bot_name_en:$('botNameEn').value.trim()||null,bot_tone:$('botTone').value,welcome_ar:$('welcomeAr').value.trim()||null,welcome_en:$('welcomeEn').value.trim()||null,services:sv,hours:defaultHours()};if(!body.name_ar||!body.name_en||!body.phone||!body.maps_url)throw Error(lang==='ar'?'أكمل الحقول المطلوبة.':'Complete all required fields.');let d=await api('/api/businesses',{method:'POST',body:JSON.stringify(body)});$('createMsg').innerHTML='<span class="ok">'+t('created')+'</span>';await loadBusinesses(d.id);if(d.qr)showQr(d.qr);setTimeout(()=>$('businessDialog').close(),600);toast(t('created'))}catch(e){$('createMsg').innerHTML='<span class="err">'+escapeHtml(e.message)+'</span>';toast(e.message,true)}finally{btn.disabled=false;btn.textContent=t('createConnect')}};
+$('createBusiness').onclick=async()=>{let btn=$('createBusiness');try{validateOnboardStep();btn.disabled=true;btn.textContent=lang==='ar'?'جاري الإنشاء...':'Creating...';let sv=[...document.querySelectorAll('#onboardingServices .onboardingServiceRow')].map(r=>({name_ar:r.querySelector('.o-ar').value.trim(),name_en:r.querySelector('.o-en').value.trim(),duration_min:+r.querySelector('.o-duration').value,price:+r.querySelector('.o-price').value,buffer_min:+r.querySelector('.o-buffer').value})).filter(x=>x.name_ar&&x.name_en);if(!sv.length||sv.some(x=>!x.duration_min||x.duration_min<5||Number.isNaN(x.price)||x.price<0))throw Error(lang==='ar'?'تحقق من بيانات الخدمات.':'Check the service details.');let body={name_ar:$('nameAr').value.trim(),name_en:$('nameEn').value.trim(),phone:normalizePhone($('phone').value),maps_url:$('maps').value.trim(),latitude:null,longitude:null,vat_number:$('vat').value||null,cr_number:$('cr').value||null,bot_name_ar:$('botNameAr').value.trim()||null,bot_name_en:$('botNameEn').value.trim()||null,bot_tone:$('botTone').value,welcome_ar:$('welcomeAr').value.trim()||null,welcome_en:$('welcomeEn').value.trim()||null,services:sv,hours:defaultHours()};if(!body.name_ar||!body.name_en||!body.phone||!body.maps_url)throw Error(lang==='ar'?'أكمل الحقول المطلوبة.':'Complete all required fields.');let d=await api('/api/businesses',{method:'POST',body:JSON.stringify(body)});$('createMsg').innerHTML='<span class="ok">'+t('created')+'</span>';await loadBusinesses(d.id);if(d.qr)showQr(d.qr);setTimeout(()=>$('businessDialog').close(),600);toast(t('created'))}catch(e){$('createMsg').innerHTML='<span class="err">'+escapeHtml(e.message)+'</span>';toast(e.message,true)}finally{btn.disabled=false;btn.textContent=t('createConnect')}};
 function normalizePhone(v){let p=v.replace(/\D/g,'');if(p.startsWith('05'))p='966'+p.slice(1);if(p.startsWith('5')&&p.length===9)p='966'+p;return p}
 async function loadBusinesses(select){let rows=await api('/api/businesses');$('businessSelect').innerHTML=rows.map(x=>`<option value="${x.id}">${escapeHtml(lang==='ar'?x.name_ar:x.name_en)}</option>`).join('');if(select)$('businessSelect').value=select;if(rows.length){current=$('businessSelect').value;$('emptyState').classList.add('hidden');$('overviewContent').classList.remove('hidden');await loadDetail()}else{current=null;detail=null;$('emptyState').classList.remove('hidden');$('overviewContent').classList.add('hidden')}}
 $('businessSelect').onchange=async()=>{current=$('businessSelect').value;await loadDetail()};
