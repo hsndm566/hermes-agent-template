@@ -29,7 +29,25 @@ async def startup():
 @app.on_event('shutdown')
 async def shutdown(): await close_db(); await r.aclose()
 @app.get('/health')
-async def health(): return {'ok':True}
+async def health():
+    checks={'postgres':False,'redis':False,'evolution':False}
+    try:
+        p=await get_pool()
+        checks['postgres']=(await p.fetchval('SELECT 1'))==1
+    except Exception:
+        pass
+    try:
+        checks['redis']=bool(await r.ping())
+    except Exception:
+        pass
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            resp=await client.get(settings.evolution_internal_url.rstrip('/') + '/')
+            checks['evolution']=resp.status_code < 500
+    except Exception:
+        pass
+    ok=all(checks.values())
+    return JSONResponse({'ok':ok,'checks':checks},status_code=200 if ok else 503)
 
 @app.post('/api/login')
 async def login(body:LoginIn,response:Response):
