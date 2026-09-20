@@ -97,6 +97,17 @@ if [[ "${RUN_E2E_SELFTEST:-false}" == "true" ]]; then
   echo "[startup] Client-readiness selftest passed"
 fi
 
+if [[ "${WA_PERSISTENCE_PROBE_MODE:-}" == "write" ]]; then
+  echo "[startup] Writing persistence canary"
+  python -m app.persistence_probe write
+elif [[ "${WA_PERSISTENCE_PROBE_MODE:-}" == "check" ]]; then
+  echo "[startup] Checking persistence canary"
+  python -m app.persistence_probe check
+elif [[ "${WA_PERSISTENCE_PROBE_MODE:-}" == "cleanup" ]]; then
+  echo "[startup] Cleaning persistence canary"
+  python -m app.persistence_probe cleanup
+fi
+
 if [[ -n "${WA_PERSIST_URL:-}" && -n "${WA_PERSIST_KEY:-}" && -n "${WA_BACKUP_SECRET:-}" ]]; then
   echo "[startup] Creating initial persistent snapshot"
   python -m app.persistence backup
