@@ -32,9 +32,14 @@ def rpc(name, payload):
             "Authorization": f"Bearer {SUPABASE_KEY}",
         },
     )
-    with urllib.request.urlopen(req, timeout=60) as res:
-        raw = res.read()
-        return json.loads(raw.decode("utf-8")) if raw else None
+    try:
+        with urllib.request.urlopen(req, timeout=60) as res:
+            raw = res.read()
+            return json.loads(raw.decode("utf-8")) if raw else None
+    except urllib.error.HTTPError as exc:
+        body=exc.read().decode("utf-8","replace")[:500]
+        print(f"[persistence] rpc {name} HTTP {exc.code}: {body}",flush=True)
+        raise
 
 def run(cmd):
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
