@@ -268,15 +268,32 @@ async def live_test_message(bid:str,request:Request,_=Depends(require_admin)):
     text=('اختبار الاتصال ✅ أرسل أي رسالة لهذا الرقم الآن لإكمال اختبار الاستقبال.'
           if lang=='ar' else
           'Connection test ✅ Reply with any message now to complete the inbound-message test.')
+    started_at=datetime.now().astimezone().isoformat()
+    p=await get_pool(); uid=UUID(bid)
+    for sk,sv in [('conversation_test_started_at',started_at),('conversation_test_phone',phone)]:
+        await p.execute('''INSERT INTO settings(id,"businessId",key,value) VALUES($1,$2,$3,$4)
+            ON CONFLICT ("businessId",key) DO UPDATE SET value=EXCLUDED.value''',uuid4(),uid,sk,sv)
     await evolution.send_text(b['whatsapp_session_id'],phone,text)
-    return {'ok':True,'phone':phone,'language':lang,'state':raw_state}
+    return {'ok':True,'phone':phone,'language':lang,'state':raw_state,'started_at':started_at}
 
 @app.get('/api/businesses/{bid}/conversation-test-status')
 async def conversation_test_status(bid:str,_=Depends(require_admin)):
     await tenant_or_404(bid); uid=UUID(bid); p=await get_pool()
-    rows=await p.fetch('SELECT key,value FROM settings WHERE "businessId"=$1 AND key=ANY($2::text[])',uid,['last_inbound_at','last_inbound_phone','last_inbound_text'])
+    keys=['conversation_test_started_at','conversation_test_phone','last_inbound_at','last_inbound_phone','last_inbound_text']
+    rows=await p.fetch('SELECT key,value FROM settings WHERE "businessId"=$1 AND key=ANY($2::text[])',uid,keys)
     data={x['key']:x['value'] for x in rows}
-    return {'ok':bool(data.get('last_inbound_at')),'last_inbound_at':data.get('last_inbound_at'),'last_inbound_phone':data.get('last_inbound_phone'),'last_inbound_text':data.get('last_inbound_text')}
+    started=data.get('conversation_test_started_at')
+    expected=data.get('conversation_test_phone')
+    inbound_at=data.get('last_inbound_at')
+    inbound_phone=data.get('last_inbound_phone')
+    ok=False
+    if started and inbound_at and expected and inbound_phone:
+        try:
+            ok=(normalize_phone(inbound_phone)==normalize_phone(expected)
+                and datetime.fromisoformat(inbound_at) >= datetime.fromisoformat(started))
+        except Exception:
+            ok=False
+    return {'ok':ok,'started_at':started,'last_inbound_at':inbound_at,'last_inbound_phone':inbound_phone,'last_inbound_text':data.get('last_inbound_text')}
 
 @app.post('/webhook/whatsapp')
 async def whatsapp_webhook(request:Request):
@@ -296,7 +313,7 @@ async def whatsapp_webhook(request:Request):
     phone=jid_to_phone(key,data)
     if not phone: return JSONResponse({'ok':False,'error':'unknown sender'},400)
     p=await get_pool()
-    now_iso=datetime.now().isoformat()
+    now_iso=datetime.now().astimezone().isoformat()
     for sk,sv in [('last_inbound_at',now_iso),('last_inbound_phone',phone),('last_inbound_text',text[:160])]:
         await p.execute('''INSERT INTO settings(id,"businessId",key,value) VALUES($1,$2,$3,$4)
             ON CONFLICT ("businessId",key) DO UPDATE SET value=EXCLUDED.value''',uuid4(),bid,sk,sv)
