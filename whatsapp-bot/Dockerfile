@@ -1,3 +1,12 @@
+# --- Stage 1: build the React/Vite dashboard -------------------------------
+FROM node:20-alpine AS frontend-build
+WORKDIR /src
+COPY frontend-src/package.json ./
+RUN npm install --no-audit --no-fund
+COPY frontend-src/ ./
+RUN npm run build
+
+# --- Stage 2: the actual runtime image --------------------------------------
 FROM evoapicloud/evolution-api:v2.3.7
 
 USER root
@@ -9,7 +18,7 @@ COPY backend/requirements.txt /tmp/requirements.txt
 RUN /venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt     && apk del .build-deps     && npm install --omit=dev --no-audit --no-fund --save-exact baileys@7.0.0-rc13
 
 COPY backend/app /app/app
-COPY frontend /app/frontend
+COPY --from=frontend-build /frontend /app/frontend
 COPY migrations /app/migrations
 COPY start-all.sh /app/start-all.sh
 
