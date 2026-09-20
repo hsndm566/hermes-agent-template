@@ -83,7 +83,25 @@
               </div>
               <div id="qrWrap" class="qrBox hidden">
                 <img id="qr" alt="WhatsApp QR">
-                <div><h4 data-i18n="scanQr">امسح QR من واتساب</h4><p class="muted" data-i18n="scanHelp">واتساب ← الإعدادات ← الأجهزة المرتبطة ← ربط جهاز</p><button id="refreshQr" class="secondary compact" data-i18n="newQr">تحديث QR</button></div>
+                <div>
+                  <h4 data-i18n="scanQr">امسح QR من واتساب</h4>
+                  <p class="muted" data-i18n="scanHelp">واتساب ← الإعدادات ← الأجهزة المرتبطة ← ربط جهاز</p>
+                  <button id="refreshQr" class="secondary compact" data-i18n="newQr">تحديث QR</button>
+                </div>
+              </div>
+              <div id="liveTestBox" class="liveTestBox hidden">
+                <div>
+                  <span class="eyebrow">5</span>
+                  <h4 id="liveTestTitle">اختبار واتساب الحقيقي</h4>
+                  <p id="liveTestHelp" class="muted">أرسل رسالة اختبار إلى رقم آخر، ثم رد من واتساب للتحقق من وصول الرسالة للويب هوك.</p>
+                </div>
+                <div class="liveTestControls">
+                  <input id="liveTestPhone" inputmode="tel" placeholder="9665XXXXXXXX" dir="ltr">
+                  <select id="liveTestLang"><option value="ar">العربية</option><option value="en">English</option></select>
+                  <button id="sendLiveTest" class="secondary compact" type="button">إرسال اختبار</button>
+                  <button id="checkLiveTest" class="secondary compact" type="button">تحقق من الرد</button>
+                </div>
+                <p id="liveTestResult" class="muted"></p>
               </div>
             </article>
 
@@ -184,15 +202,25 @@
       <span class="eyebrow" data-i18n="quickSetup">إعداد سريع</span>
       <h2 data-i18n="addBusinessTitle">أضف منشأة جديدة</h2>
       <p class="muted" data-i18n="addBusinessHelp">نحتاج المعلومات الأساسية فقط. يمكنك تعديل كل شيء لاحقاً.</p>
-      <div class="formGrid">
-        <label><span data-i18n="businessNameAr">اسم المنشأة بالعربي</span><input id="nameAr" required placeholder="مثال: صالون الرياض"></label>
-        <label><span data-i18n="businessNameEn">Business name in English</span><input id="nameEn" required placeholder="Example: Riyadh Salon" dir="ltr"></label>
-        <label><span data-i18n="ownerPhone">رقم واتساب</span><input id="phone" required inputmode="tel" placeholder="9665XXXXXXXX"></label>
-        <label><span data-i18n="mapsLink">رابط Google Maps</span><input id="maps" required placeholder="https://maps.google.com/..."></label>
+
+      <div class="onboardProgress" aria-label="Onboarding progress">
+        <span class="active" data-onboard-dot="1">1</span>
+        <span data-onboard-dot="2">2</span>
+        <span data-onboard-dot="3">3</span>
+        <b id="onboardStepLabel">بيانات المنشأة</b>
       </div>
-      <details><summary data-i18n="invoiceDetails">بيانات المنشأة والفوترة الاختيارية</summary><div class="formGrid"><label><span data-i18n="vat">الرقم الضريبي</span><input id="vat"></label><label><span data-i18n="cr">رقم السجل التجاري</span><input id="cr"></label><input id="lat" type="hidden"><input id="lng" type="hidden"></div></details>
-      <div class="divider"></div>
-      <div>
+
+      <section class="onboardStep active" data-onboard-step="1">
+        <div class="formGrid">
+          <label><span data-i18n="businessNameAr">اسم المنشأة بالعربي</span><input id="nameAr" required placeholder="مثال: صالون الرياض"></label>
+          <label><span data-i18n="businessNameEn">Business name in English</span><input id="nameEn" required placeholder="Example: Riyadh Salon" dir="ltr"></label>
+          <label><span data-i18n="ownerPhone">رقم واتساب</span><input id="phone" required inputmode="tel" placeholder="9665XXXXXXXX"></label>
+          <label><span data-i18n="mapsLink">رابط Google Maps</span><input id="maps" required placeholder="https://maps.google.com/..."></label>
+        </div>
+        <details><summary data-i18n="invoiceDetails">بيانات المنشأة والفوترة الاختيارية</summary><div class="formGrid"><label><span data-i18n="vat">الرقم الضريبي</span><input id="vat"></label><label><span data-i18n="cr">رقم السجل التجاري</span><input id="cr"></label><input id="lat" type="hidden"><input id="lng" type="hidden"></div></details>
+      </section>
+
+      <section class="onboardStep" data-onboard-step="2">
         <span class="eyebrow" data-i18n="botPersonality">شخصية البوت</span>
         <h3 data-i18n="botSetupHelp">اختر كيف يتحدث البوت مع عملاء هذه المنشأة.</h3>
         <div class="formGrid">
@@ -210,14 +238,23 @@
           <label><span data-i18n="welcomeEn">Optional English welcome</span><textarea id="welcomeEn" rows="3" dir="ltr"></textarea></label>
         </div>
         <p class="muted" data-i18n="languageChoiceHelp">أول رسالة من أي عميل جديد ستكون: اختر اللغة / Choose your language.</p>
+      </section>
+
+      <section class="onboardStep" data-onboard-step="3">
+        <div class="cardHead onboardingServicesHead">
+          <div><h3 data-i18n="firstServices">الخدمات الأولى</h3><p class="muted" data-i18n="serviceInputHelp">أضف خدمة واحدة على الأقل. يمكنك إضافة المزيد لاحقاً.</p></div>
+          <button type="button" id="addOnboardingService" class="secondary compact" data-i18n="addService">+ خدمة</button>
+        </div>
+        <div id="onboardingServices"></div>
+        <p class="muted">ساعات العمل الافتراضية 10:00–22:00 ويمكن تعديلها بعد الإنشاء. / Default hours are 10:00–22:00 and can be edited after setup.</p>
+      </section>
+
+      <div class="dialogActions">
+        <button type="button" id="onboardBack" class="secondary hidden">السابق / Back</button>
+        <button type="button" id="onboardNext" class="primary">التالي / Next</button>
+        <button type="button" id="createBusiness" class="primary hidden" data-i18n="createConnect">إنشاء وربط واتساب</button>
+        <button value="cancel" class="secondary" data-i18n="cancel">إلغاء</button>
       </div>
-      <div class="divider"></div>
-      <div class="cardHead onboardingServicesHead">
-        <div><h3 data-i18n="firstServices">الخدمات الأولى</h3><p class="muted" data-i18n="serviceInputHelp">أضف خدمة واحدة على الأقل. يمكنك إضافة المزيد لاحقاً.</p></div>
-        <button type="button" id="addOnboardingService" class="secondary compact" data-i18n="addService">+ خدمة</button>
-      </div>
-      <div id="onboardingServices"></div>
-      <div class="dialogActions"><button type="button" id="createBusiness" class="primary" data-i18n="createConnect">إنشاء وربط واتساب</button><button value="cancel" class="secondary" data-i18n="cancel">إلغاء</button></div>
       <p id="createMsg"></p>
     </form>
   </dialog>
