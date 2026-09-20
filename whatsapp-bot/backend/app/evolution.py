@@ -63,6 +63,9 @@ class EvolutionClient:
     async def delete_instance(self, instance: str):
         return await self._request("DELETE", f"/instance/delete/{instance}", timeout=20)
 
+    async def logout(self, instance: str):
+        return await self._request("DELETE", f"/instance/logout/{instance}", timeout=20)
+
     async def send_text(self, instance: str, number: str, text: str):
         if instance.startswith("test-biz-"):
             return {"test": True, "text": text}
