@@ -14,6 +14,8 @@ async def services(bid):
     p=await get_pool(); return await p.fetch('SELECT * FROM services WHERE "businessId"=$1 ORDER BY name_ar', UUID(str(bid)))
 async def staff(bid):
     p=await get_pool(); return await p.fetch('SELECT * FROM staff WHERE "businessId"=$1 AND is_active=true ORDER BY name_ar', UUID(str(bid)))
+async def working_hours(bid, ramadan=False):
+    p=await get_pool(); return await p.fetch('SELECT * FROM working_hours WHERE "businessId"=$1 AND is_ramadan=$2 ORDER BY day_of_week', UUID(str(bid)), ramadan)
 async def settings_map(bid):
     p=await get_pool(); rows=await p.fetch('SELECT key,value FROM settings WHERE "businessId"=$1', UUID(str(bid))); return {r['key']:r['value'] for r in rows}
 async def customer(bid, phone):
