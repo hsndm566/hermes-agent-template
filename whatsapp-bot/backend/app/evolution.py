@@ -20,6 +20,7 @@ class EvolutionClient:
             "webhook": {
                 "enabled": True,
                 "url": settings.evolution_webhook_url,
+                "headers": {"X-Webhook-Secret": settings.whatsapp_webhook_secret},
                 "byEvents": False,
                 "base64": False,
                 "events": ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"],
