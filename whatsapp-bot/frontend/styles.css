@@ -154,3 +154,14 @@ dialog::backdrop { background: rgba(17,24,39,.52); }
 @media (max-width:640px) {
   .staffRow, .onboardingServiceRow { grid-template-columns:1fr 1fr; }
 }
+
+.onboardProgress{display:flex;align-items:center;gap:8px;margin:18px 0;padding:10px 0;border-bottom:1px solid #eef0f2}
+.onboardProgress span{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:#eef0f2;color:var(--muted);font-weight:700;font-size:12px}
+.onboardProgress span.active{background:var(--ink);color:#fff}
+.onboardProgress b{margin-inline-start:6px;font-size:13px}
+.onboardStep{display:none;min-height:260px}
+.onboardStep.active{display:block}
+.liveTestBox{margin-top:14px;padding:14px;border:1px solid #e5e7eb;border-radius:14px;background:#fafafa}
+.liveTestControls{display:grid;grid-template-columns:2fr 1fr auto auto;gap:8px;align-items:end;margin-top:10px}
+.liveTestControls input,.liveTestControls select{margin:0}
+@media(max-width:760px){.liveTestControls{grid-template-columns:1fr 1fr}.onboardStep{min-height:auto}}
