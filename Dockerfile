@@ -182,7 +182,9 @@ COPY personalization/ /app/personalization/
 COPY start.sh /app/start.sh
 COPY telegram_capture.py /app/telegram_capture.py
 COPY scripts/hermes-whisper-stt.sh /usr/local/bin/hermes-whisper-stt
-RUN chmod +x /app/start.sh /usr/local/bin/hermes-whisper-stt
+RUN chmod +x /app/start.sh /usr/local/bin/hermes-whisper-stt && \
+    python -m py_compile /app/server.py && \
+    sh -n /usr/local/bin/hermes-whisper-stt
 
 ENV HOME=/data
 ENV HERMES_HOME=/data/.hermes
