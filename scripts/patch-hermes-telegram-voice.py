@@ -103,6 +103,16 @@ new = '''    async def _cache_inbound_av(self, msg, event: MessageEvent, source:
                             "[Telegram] Pre-transcribed user voice at %s (%d chars)",
                             cached_path, len(transcript),
                         )
+                        # start.sh enables transcript echo for this deployment.
+                        # Echo here because the normal gateway path sees this
+                        # event as already-STT-prepared and therefore will not
+                        # run the later echo hook. Mark it echoed so queued
+                        # delivery cannot duplicate the same transcript.
+                        try:
+                            await msg.reply_text(f'🎙️ "{transcript}"')
+                            event._gateway_pending_stt_echoed = 1
+                        except Exception as echo_exc:
+                            logger.debug("[Telegram] Voice transcript echo failed: %s", echo_exc)
                     else:
                         logger.warning(
                             "[Telegram] Eager voice STT did not succeed; central gateway will retry: %s",
