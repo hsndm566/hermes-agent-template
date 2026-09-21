@@ -3003,7 +3003,6 @@ async def auto_start():
         print("[server] Config incomplete — gateway not started. Configure provider + model in the admin UI.", flush=True)
 
 
-@asynccontextmanager
 async def _gateway_recovery_watchdog():
     # Normal unexpected exits are already restarted with exponential backoff by
     # Gateway._supervise_respawn(). This is the second line of defense: if that
@@ -3031,6 +3030,7 @@ async def _gateway_recovery_watchdog():
             print(f"[watchdog] gateway recovery failed: {exc!r}", flush=True)
 
 
+@asynccontextmanager
 async def lifespan(app):
     _sweep_stale_backup_tmpdirs()
     # Strip .env keys that would make hermes shut its own dashboard down before
