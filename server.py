@@ -1905,7 +1905,15 @@ async def page_index(request: Request):
 
 
 async def route_health(request: Request):
-    return JSONResponse({"status": "ok", "gateway": gw.state})
+    # If Hermes is configured, the public service is only healthy when the
+    # always-on gateway is alive or actively starting. Unconfigured setup mode
+    # stays healthy so the setup UI remains reachable.
+    configured = is_config_complete()
+    healthy = (not configured) or gw.state in {"running", "starting"}
+    return JSONResponse(
+        {"status": "ok" if healthy else "degraded", "gateway": gw.state},
+        status_code=200 if healthy else 503,
+    )
 
 
 async def api_config_get(request: Request):
@@ -2996,6 +3004,33 @@ async def auto_start():
 
 
 @asynccontextmanager
+async def _gateway_recovery_watchdog():
+    # Normal unexpected exits are already restarted with exponential backoff by
+    # Gateway._supervise_respawn(). This is the second line of defense: if that
+    # transient crash budget is exhausted, wait for a cool-down and grant one
+    # fresh budget. Never fight Hermes exit 78 / fatal configuration, and never
+    # restart while the user has intentionally paused the agent.
+    last_recovery = 0.0
+    while True:
+        await asyncio.sleep(60)
+        if not is_config_complete() or estop_state() is not None:
+            continue
+        if gw.state != "crashed":
+            continue
+        recent = "\n".join(list(gw.logs)[-40:]).lower()
+        if "fatal config" in recent or "code 78" in recent:
+            continue
+        now = time.monotonic()
+        if now - last_recovery < 300:
+            continue
+        last_recovery = now
+        print("[watchdog] resetting transient gateway crash budget and restarting", flush=True)
+        try:
+            await gw.start(reset_budget=True)
+        except Exception as exc:
+            print(f"[watchdog] gateway recovery failed: {exc!r}", flush=True)
+
+
 async def lifespan(app):
     _sweep_stale_backup_tmpdirs()
     # Strip .env keys that would make hermes shut its own dashboard down before
@@ -3016,10 +3051,13 @@ async def lifespan(app):
     # and it's independent of gateway state.
     asyncio.create_task(dash.start())
     await auto_start()
+    recovery_task = asyncio.create_task(_gateway_recovery_watchdog())
     try:
         yield
     finally:
+        recovery_task.cancel()
         await asyncio.gather(
+            recovery_task,
             gw.stop(),
             dash.stop(),
             return_exceptions=True,
