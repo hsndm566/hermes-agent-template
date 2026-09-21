@@ -68,6 +68,10 @@ RUN apt-get update && \
 # 2026-09-02 leaves nemo-relay>=0.8.3 unsatisfiable and hard-fails the build.
 # Same trap for cryptography==50.0.0 and h2 4.4.1. Re-read this floor on every
 # bump — it tracks whatever nemo-relay pin the pinned tag carries.
+# Narrow build-time patch for Telegram voice ingress. Keep it before the
+# Hermes clone/install layer because that layer applies the patch immediately.
+COPY scripts/patch-hermes-telegram-voice.py /tmp/patch-hermes-telegram-voice.py
+
 RUN git clone --depth 1 --branch ${HERMES_REF} https://github.com/NousResearch/hermes-agent.git /opt/hermes-agent && \
     python /tmp/patch-hermes-telegram-voice.py && \
     cd /opt/hermes-agent && \
@@ -147,12 +151,6 @@ RUN git clone --depth 1 --branch ${WHISPER_CPP_REF} https://github.com/ggml-org/
 #
 # Same trap for any other package we might pin separately: on a version bump,
 # grep the new pyproject's core dependencies for anything this Dockerfile pins.
-
-# Patch the pinned upstream Telegram voice ingress at build time. This is kept
-# as a narrow source patch rather than forking Hermes wholesale: it adds bounded
-# Telegram download retries and eager local STT for voice notes so the known
-# adapter->gateway STT handoff regressions cannot silently drop fresh audio.
-COPY scripts/patch-hermes-telegram-voice.py /tmp/patch-hermes-telegram-voice.py
 
 
 # Pin the curated third-party skill sources into the image. Runtime skill-hub
