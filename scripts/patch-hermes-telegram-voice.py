@@ -96,7 +96,7 @@ new = '''    async def _cache_inbound_av(self, msg, event: MessageEvent, source:
                         original_text = (event.text or "").strip()
                         quoted = f'"{transcript}"'
                         event._gateway_pending_stt_text = (
-                            f"{quoted}\n\n{original_text}" if original_text else quoted
+                            f"{quoted}\\n\\n{original_text}" if original_text else quoted
                         )
                         event._gateway_pending_stt_transcripts = [transcript]
                         logger.info(
