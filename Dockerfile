@@ -69,6 +69,7 @@ RUN apt-get update && \
 # Same trap for cryptography==50.0.0 and h2 4.4.1. Re-read this floor on every
 # bump — it tracks whatever nemo-relay pin the pinned tag carries.
 RUN git clone --depth 1 --branch ${HERMES_REF} https://github.com/NousResearch/hermes-agent.git /opt/hermes-agent && \
+    python /tmp/patch-hermes-telegram-voice.py && \
     cd /opt/hermes-agent && \
     uv pip install --system --no-cache -e ".[all,messaging,tts-premium,honcho,bedrock,anthropic,edge-tts,hindsight,vision]" && \
     cd /opt/hermes-agent/web && \
@@ -124,6 +125,10 @@ RUN git clone --depth 1 --branch ${WHISPER_CPP_REF} https://github.com/ggml-org/
       -o /opt/whisper-models/ggml-small-q5_1.bin \
       https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin && \
     echo "6fe57ddcfdd1c6b07cdcc73aaf620810ce5fc771  /opt/whisper-models/ggml-small-q5_1.bin" | sha1sum -c - && \
+    curl -fL --retry 3 --retry-delay 2 \
+      -o /opt/whisper-models/ggml-base-q5_1.bin \
+      https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin && \
+    echo "a3733eda680ef76256db5fc5dd9de8629e62c5e7  /opt/whisper-models/ggml-base-q5_1.bin" | sha1sum -c - && \
     rm -rf /tmp/whisper.cpp
 
 # firecrawl-anydoc (the PDF / legacy-Office reader behind read_file) is a CORE
@@ -142,6 +147,12 @@ RUN git clone --depth 1 --branch ${WHISPER_CPP_REF} https://github.com/ggml-org/
 #
 # Same trap for any other package we might pin separately: on a version bump,
 # grep the new pyproject's core dependencies for anything this Dockerfile pins.
+
+# Patch the pinned upstream Telegram voice ingress at build time. This is kept
+# as a narrow source patch rather than forking Hermes wholesale: it adds bounded
+# Telegram download retries and eager local STT for voice notes so the known
+# adapter->gateway STT handoff regressions cannot silently drop fresh audio.
+COPY scripts/patch-hermes-telegram-voice.py /tmp/patch-hermes-telegram-voice.py
 
 
 # Pin the curated third-party skill sources into the image. Runtime skill-hub
