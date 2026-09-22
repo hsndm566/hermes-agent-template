@@ -626,7 +626,17 @@ seed_vendor_skill qa /opt/vendor/gstack/qa
 seed_vendor_skill investigate /opt/vendor/gstack/investigate
 seed_vendor_skill ship /opt/vendor/gstack/ship
 
-seed_vendor_skill google-workspace /opt/vendor/hermeshub/skills/google-workspace
+# Prefer the official Google Workspace skill bundled with the pinned Hermes release.
+# Replace the legacy trimmed persistent copy once if it lacks the official OAuth setup script.
+if [ ! -f /data/.hermes/skills/google-workspace/scripts/setup.py ] && [ -d /opt/hermes-agent/skills/productivity/google-workspace ]; then
+  rm -rf /data/.hermes/skills/google-workspace
+  cp -a /opt/hermes-agent/skills/productivity/google-workspace /data/.hermes/skills/google-workspace
+  echo "[skills] upgraded google-workspace to official bundled skill"
+fi
+seed_vendor_skill google-workspace /opt/hermes-agent/skills/productivity/google-workspace
+
+# Persist the official GitHub skill as well. GitHub auth itself is stored separately.
+seed_vendor_skill github /opt/hermes-agent/skills/software-development/github
 
 mkdir -p /data/.hermes/wiki /data/.hermes/cache/uv
 export WIKI_PATH=/data/.hermes/wiki
