@@ -713,6 +713,24 @@ install_skill_if_missing google-workspace amanning3390/hermeshub/skills/google-w
 timeout 45s hermes skills audit >/tmp/hermes-skills-audit.log 2>&1 || true
 echo "[skills] curated pack ready"
 ) &
+# Non-secret GitHub boot diagnostic. Railway keeps the token in service variables;
+# this only confirms the credential resolves and can read the Hermes repository.
+if command -v gh >/dev/null 2>&1 && [ -n "${GITHUB_TOKEN:-}" ]; then
+  if GH_TOKEN="$GITHUB_TOKEN" gh api user --jq '.login' >/tmp/hermes-github-login 2>/dev/null; then
+    GH_LOGIN="$(cat /tmp/hermes-github-login 2>/dev/null || true)"
+    if GH_TOKEN="$GITHUB_TOKEN" gh repo view hsndm566/hermes-agent-template --json nameWithOwner --jq '.nameWithOwner' >/tmp/hermes-github-repo 2>/dev/null; then
+      GH_REPO="$(cat /tmp/hermes-github-repo 2>/dev/null || true)"
+      echo "[github] AUTH_OK login=${GH_LOGIN:-unknown} repo=${GH_REPO:-unknown}"
+    else
+      echo "[github] AUTH_PARTIAL login=${GH_LOGIN:-unknown} repo_read=failed"
+    fi
+  else
+    echo "[github] AUTH_FAILED"
+  fi
+else
+  echo "[github] AUTH_MISSING"
+fi
+
 echo "[skills] background installer started"
 # ---- END HASAN PERSONAL HERMES BOOTSTRAP v2 ----
 
