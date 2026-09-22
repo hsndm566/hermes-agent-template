@@ -584,6 +584,44 @@ p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 print("[self-learning] memory=on skills=on background_review=on", flush=True)
 PY
 
+# Configure GitHub's official remote MCP server. The bearer value itself stays
+# in Railway as MCP_GITHUB_API_KEY; config.yaml stores only an environment
+# reference, so Hermes can use authenticated GitHub tools without exposing the
+# raw credential to Telegram or terminal commands.
+python - <<'PY' || true
+from pathlib import Path
+import yaml
+
+p = Path("/data/.hermes/config.yaml")
+try:
+    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+except Exception:
+    data = {}
+if not isinstance(data, dict):
+    data = {}
+
+servers = data.setdefault("mcp_servers", {})
+if not isinstance(servers, dict):
+    servers = {}
+    data["mcp_servers"] = servers
+
+existing = servers.get("github")
+if not isinstance(existing, dict):
+    existing = {}
+servers["github"] = {
+    **existing,
+    "url": "https://api.githubcopilot.com/mcp/",
+    "headers": {
+        **(existing.get("headers") if isinstance(existing.get("headers"), dict) else {}),
+        "Authorization": "Bearer ${MCP_GITHUB_API_KEY}",
+    },
+    "enabled": True,
+}
+
+p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+print("[github-mcp] configured official remote GitHub MCP server", flush=True)
+PY
+
 # Make newly bundled custom skills available on later upgrades too, while
 # preserving any existing/learned version on the persistent volume.
 for src in /app/personalization/skills/*; do
