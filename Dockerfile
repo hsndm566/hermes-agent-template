@@ -186,7 +186,9 @@ COPY scripts/hermes-drive-archive.py /app/scripts/hermes-drive-archive.py
 COPY scripts/hermes-whisper-stt.sh /usr/local/bin/hermes-whisper-stt
 RUN chmod +x /app/start.sh /app/scripts/hermes-drive-archive.py /usr/local/bin/hermes-whisper-stt && \
     python -m py_compile /app/server.py /app/scripts/hermes-drive-archive.py /app/scripts/patch-hermes-telegram-voice.py \
+      /app/personalization/scripts/final_certify.py \
       /opt/hermes-agent/plugins/platforms/telegram/adapter.py && \
+    bash -n /app/start.sh && \
     grep -Fq '[Telegram] Pre-transcribed user voice' /opt/hermes-agent/plugins/platforms/telegram/adapter.py && \
     grep -Fq 'attempts = 3 if kind == "voice" else 1' /opt/hermes-agent/plugins/platforms/telegram/adapter.py && \
     test -s /opt/whisper-models/ggml-small-q5_1.bin && \
