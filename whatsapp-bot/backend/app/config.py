@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     evolution_internal_url: str
     evolution_api_key: str
     evolution_webhook_url: str
+    evolution_provider: str = "api"  # api = Evolution API v2, go = Evolution Go
     whatsapp_webhook_secret: str
     app_public_url: str
     admin_username: str
