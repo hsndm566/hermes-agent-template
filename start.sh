@@ -44,7 +44,7 @@ fi
 # while network requests still succeed). Keep durable user state, credentials,
 # sessions, skills and config; prune only disposable caches and rotated logs.
 echo "[storage-guard] usage before cleanup:" >&2
-du -sm /data/.hermes/cache /data/.hermes/logs /data/.hermes/lazy-packages /data/.hermes/sessions /data/.hermes/workspace /data/.hermes/wiki 2>/dev/null >&2 || true
+du -sm /data/.hermes/* /data/.hermes/.[!.]* 2>/dev/null | sort -nr | head -30 >&2 || true
 
 rm -rf /data/.hermes/cache/terminal/* \
        /data/.hermes/cache/audio/* \
@@ -654,6 +654,47 @@ p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 print("[github-mcp] configured official remote GitHub MCP server", flush=True)
 PY
 
+# Keep reproducible vendor/official skills OUT of the tiny persistent volume.
+# These sources already exist in the immutable image; symlinks make them available
+# to Hermes without duplicating whole repositories under /data. User-created
+# skills with other names remain untouched.
+link_image_skill() {
+  local name="$1"
+  local src="$2"
+  [ -d "$src" ] || return 0
+  if [ -L "/data/.hermes/skills/$name" ]; then
+    ln -sfn "$src" "/data/.hermes/skills/$name"
+    return 0
+  fi
+  if [ -e "/data/.hermes/skills/$name" ]; then
+    rm -rf "/data/.hermes/skills/$name"
+  fi
+  ln -s "$src" "/data/.hermes/skills/$name"
+}
+
+link_image_skill planning-with-files /opt/vendor/planning-with-files/.hermes/skills/planning-with-files
+link_image_skill using-superpowers /opt/vendor/superpowers/skills/using-superpowers
+link_image_skill systematic-debugging /opt/vendor/superpowers/skills/systematic-debugging
+link_image_skill test-driven-development /opt/vendor/superpowers/skills/test-driven-development
+link_image_skill writing-plans /opt/vendor/superpowers/skills/writing-plans
+link_image_skill executing-plans /opt/vendor/superpowers/skills/executing-plans
+link_image_skill verification-before-completion /opt/vendor/superpowers/skills/verification-before-completion
+link_image_skill gstack /opt/vendor/gstack
+link_image_skill plan-ceo-review /opt/vendor/gstack/plan-ceo-review
+link_image_skill plan-eng-review /opt/vendor/gstack/plan-eng-review
+link_image_skill design-review /opt/vendor/gstack/design-review
+link_image_skill review /opt/vendor/gstack/review
+link_image_skill qa /opt/vendor/gstack/qa
+link_image_skill investigate /opt/vendor/gstack/investigate
+link_image_skill ship /opt/vendor/gstack/ship
+link_image_skill google-workspace /opt/hermes-agent/skills/productivity/google-workspace
+link_image_skill github /opt/hermes-agent/skills/software-development/github
+link_image_skill qmd /opt/hermes-agent/optional-skills/research/qmd
+link_image_skill scrapling /opt/hermes-agent/optional-skills/research/scrapling
+link_image_skill publish-site /opt/hermes-agent/optional-skills/web-development/publish-site
+echo "[storage-guard] vendor skills linked from immutable image" >&2
+df -h /data >&2 || true
+
 # Make newly bundled custom skills available on later upgrades too, while
 # preserving any existing/learned version on the persistent volume.
 for src in /app/personalization/skills/*; do
@@ -673,8 +714,8 @@ seed_vendor_skill() {
   local name="$1"
   local src="$2"
   if [ ! -e "/data/.hermes/skills/$name" ] && [ -d "$src" ]; then
-    cp -a "$src" "/data/.hermes/skills/$name"
-    echo "[skills] seeded pinned skill: $name"
+    ln -s "$src" "/data/.hermes/skills/$name"
+    echo "[skills] linked pinned skill: $name"
   fi
 }
 
@@ -700,8 +741,8 @@ seed_vendor_skill ship /opt/vendor/gstack/ship
 # Replace the legacy trimmed persistent copy once if it lacks the official OAuth setup script.
 if [ ! -f /data/.hermes/skills/google-workspace/scripts/setup.py ] && [ -d /opt/hermes-agent/skills/productivity/google-workspace ]; then
   rm -rf /data/.hermes/skills/google-workspace
-  cp -a /opt/hermes-agent/skills/productivity/google-workspace /data/.hermes/skills/google-workspace
-  echo "[skills] upgraded google-workspace to official bundled skill"
+  ln -s /opt/hermes-agent/skills/productivity/google-workspace /data/.hermes/skills/google-workspace
+  echo "[skills] linked google-workspace to official bundled skill"
 fi
 seed_vendor_skill google-workspace /opt/hermes-agent/skills/productivity/google-workspace
 
