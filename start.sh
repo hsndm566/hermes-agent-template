@@ -843,6 +843,18 @@ else
 fi
 
 echo "[skills] background installer started"
+
+# External storage worker: keep Railway as fast live state, use Google Drive for
+# durable snapshots/log archives. The worker is a no-op until Hermes' own Google
+# OAuth token exists. Archives are built under /tmp, never on the persistent disk.
+(
+  sleep 20
+  while true; do
+    python /app/scripts/hermes-drive-archive.py || true
+    sleep 21600
+  done
+) &
+echo "[drive-archive] worker started (6h cadence)"
 # ---- END HASAN PERSONAL HERMES BOOTSTRAP v2 ----
 
 
