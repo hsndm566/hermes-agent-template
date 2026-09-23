@@ -181,9 +181,10 @@ COPY templates/ /app/templates/
 COPY personalization/ /app/personalization/
 COPY start.sh /app/start.sh
 COPY telegram_capture.py /app/telegram_capture.py
+COPY scripts/hermes-drive-archive.py /app/scripts/hermes-drive-archive.py
 COPY scripts/hermes-whisper-stt.sh /usr/local/bin/hermes-whisper-stt
-RUN chmod +x /app/start.sh /usr/local/bin/hermes-whisper-stt && \
-    python -m py_compile /app/server.py && \
+RUN chmod +x /app/start.sh /app/scripts/hermes-drive-archive.py /usr/local/bin/hermes-whisper-stt && \
+    python -m py_compile /app/server.py /app/scripts/hermes-drive-archive.py && \
     sh -n /usr/local/bin/hermes-whisper-stt
 
 ENV HOME=/data
