@@ -20,6 +20,25 @@ mkdir -p /data/.hermes/cron /data/.hermes/sessions /data/.hermes/logs \
          /data/.hermes/workspace /data/.hermes/skins /data/.hermes/plans \
          /data/.hermes/home
 
+# Voice is a production-critical Telegram input path. Re-apply the narrow
+# upstream adapter patch on every boot so a rebuilt image can never come up
+# with STT configured but the Telegram handoff unpatched.
+VOICE_PATCHER="/app/scripts/patch-hermes-telegram-voice.py"
+VOICE_ADAPTER="/opt/hermes-agent/plugins/platforms/telegram/adapter.py"
+VOICE_READY="/tmp/hermes-voice-ready"
+rm -f "$VOICE_READY"
+python "$VOICE_PATCHER"
+python -m py_compile "$VOICE_ADAPTER"
+grep -Fq '[Telegram] Pre-transcribed user voice' "$VOICE_ADAPTER"
+grep -Fq 'attempts = 3 if kind == "voice" else 1' "$VOICE_ADAPTER"
+command -v ffmpeg >/dev/null
+command -v whisper-cli >/dev/null
+test -x /usr/local/bin/hermes-whisper-stt
+test -s /opt/whisper-models/ggml-small-q5_1.bin
+test -s /opt/whisper-models/ggml-base-q5_1.bin
+touch "$VOICE_READY"
+echo "[voice-preflight] READY telegram_patch=on stt=whisper.cpp primary=small-q5_1 fallback=base-q5_1"
+
 # Stamp the install method as "docker" so hermes treats this as an immutable
 # container image, not a pip checkout. hermes's detect_install_method() reads
 # $HERMES_HOME/.install_method FIRST (before any .git / pip fallback). Without
@@ -709,6 +728,7 @@ link_image_skill github /opt/hermes-agent/skills/software-development/github
 link_image_skill qmd /opt/hermes-agent/optional-skills/research/qmd
 link_image_skill scrapling /opt/hermes-agent/optional-skills/research/scrapling
 link_image_skill publish-site /opt/hermes-agent/optional-skills/web-development/publish-site
+link_image_skill llm-wiki /opt/hermes-agent/skills/research/llm-wiki
 echo "[storage-guard] vendor skills linked from immutable image" >&2
 df -h /data >&2 || true
 
