@@ -39,6 +39,38 @@ fi
 
 [ ! -f /data/.hermes/.env ] && touch /data/.hermes/.env
 
+# Railway volume guard. This deployment has a 500 MB persistent volume, and
+# Hermes can become partially functional when it is full (SQLite/log writes fail
+# while network requests still succeed). Keep durable user state, credentials,
+# sessions, skills and config; prune only disposable caches and rotated logs.
+echo "[storage-guard] usage before cleanup:" >&2
+du -sm /data/.hermes/cache /data/.hermes/logs /data/.hermes/lazy-packages /data/.hermes/sessions /data/.hermes/workspace /data/.hermes/wiki 2>/dev/null >&2 || true
+
+rm -rf /data/.hermes/cache/terminal/* \
+       /data/.hermes/cache/audio/* \
+       /data/.hermes/cache/images/* \
+       /data/.hermes/cache/uv/* 2>/dev/null || true
+
+# Old lazy-installed Python packages are reproducible and are the largest
+# disposable class on a small persistent volume. Runtime packages now live in
+# /tmp below, so remove the old persistent copy.
+rm -rf /data/.hermes/lazy-packages 2>/dev/null || true
+
+# Remove rotated log generations. Keep the live files, but cap each at 2 MiB so
+# diagnostics survive without consuming the volume.
+find /data/.hermes/logs -maxdepth 1 -type f \
+  \( -name '*.log.[0-9]*' -o -name '*.log.*.gz' \) -delete 2>/dev/null || true
+for f in /data/.hermes/logs/*.log; do
+  [ -f "$f" ] || continue
+  size="$(wc -c < "$f" 2>/dev/null || echo 0)"
+  if [ "$size" -gt 2097152 ]; then
+    tail -c 2097152 "$f" > "$f.trim" 2>/dev/null && mv "$f.trim" "$f" || rm -f "$f.trim"
+  fi
+done
+
+echo "[storage-guard] cleanup complete; filesystem:" >&2
+df -h /data >&2 || true
+
 # One-time migration helper for a Railway variable that was accidentally created
 # as "TELEGRAM BOT TOKEN" (with spaces). POSIX process environments can contain
 # such a key even though normal shell variable syntax cannot reference it.
