@@ -47,12 +47,48 @@ def config():
         return {}
 
 def skill_names():
+    """Return skill names from real directories and image-backed symlink skills."""
     names=set()
     root=HOME/"skills"
     if not root.exists():
         return names
-    for p in root.rglob("SKILL.md"):
+
+    seen=set()
+    candidates=[]
+    try:
+        children=list(root.iterdir())
+    except Exception:
+        children=[]
+
+    for child in children:
         try:
+            # Path.rglob does not reliably descend directory symlinks. Resolve
+            # image-backed skills explicitly so certification matches what
+            # Hermes can actually load without duplicating them onto /data.
+            base=child.resolve() if child.is_symlink() else child
+            if not base.exists():
+                continue
+            direct=base/"SKILL.md"
+            if direct.exists():
+                candidates.append(direct)
+            if base.is_dir():
+                candidates.extend(base.rglob("SKILL.md"))
+        except Exception:
+            continue
+
+    # Keep compatibility with any nested persistent layout not reachable from a
+    # top-level child for unusual user-created skill packs.
+    try:
+        candidates.extend(root.rglob("SKILL.md"))
+    except Exception:
+        pass
+
+    for p in candidates:
+        try:
+            key=str(p.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
             head=p.read_text(encoding="utf-8", errors="ignore")[:3000]
             m=re.search(r'(?m)^name:\s*["\']?([^\n"\'#]+)', head)
             if m:
