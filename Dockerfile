@@ -71,6 +71,7 @@ RUN apt-get update && \
 # Narrow build-time patch for Telegram voice ingress. Keep it before the
 # Hermes clone/install layer because that layer applies the patch immediately.
 COPY scripts/patch-hermes-telegram-voice.py /tmp/patch-hermes-telegram-voice.py
+COPY scripts/patch-hermes-telegram-voice.py /app/scripts/patch-hermes-telegram-voice.py
 
 RUN git clone --depth 1 --branch ${HERMES_REF} https://github.com/NousResearch/hermes-agent.git /opt/hermes-agent && \
     python /tmp/patch-hermes-telegram-voice.py && \
@@ -184,7 +185,12 @@ COPY telegram_capture.py /app/telegram_capture.py
 COPY scripts/hermes-drive-archive.py /app/scripts/hermes-drive-archive.py
 COPY scripts/hermes-whisper-stt.sh /usr/local/bin/hermes-whisper-stt
 RUN chmod +x /app/start.sh /app/scripts/hermes-drive-archive.py /usr/local/bin/hermes-whisper-stt && \
-    python -m py_compile /app/server.py /app/scripts/hermes-drive-archive.py && \
+    python -m py_compile /app/server.py /app/scripts/hermes-drive-archive.py /app/scripts/patch-hermes-telegram-voice.py \
+      /opt/hermes-agent/plugins/platforms/telegram/adapter.py && \
+    grep -Fq '[Telegram] Pre-transcribed user voice' /opt/hermes-agent/plugins/platforms/telegram/adapter.py && \
+    grep -Fq 'attempts = 3 if kind == "voice" else 1' /opt/hermes-agent/plugins/platforms/telegram/adapter.py && \
+    test -s /opt/whisper-models/ggml-small-q5_1.bin && \
+    test -s /opt/whisper-models/ggml-base-q5_1.bin && \
     sh -n /usr/local/bin/hermes-whisper-stt
 
 ENV HOME=/data
