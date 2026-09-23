@@ -39,6 +39,23 @@ fi
 
 [ ! -f /data/.hermes/.env ] && touch /data/.hermes/.env
 
+# Keep heavyweight package/browser caches off the persistent volume. Hermes keeps
+# any real subprocess-home state in /data/.hermes/home, but these three entries
+# are reproducible caches/downloads and can live on ephemeral storage.
+mkdir -p /tmp/hermes-subprocess-home/.npm /tmp/hermes-subprocess-home/.cache /tmp/hermes-subprocess-home/.camoufox
+for cache_name in .npm .cache .camoufox; do
+  cache_path="/data/.hermes/home/$cache_name"
+  if [ -e "$cache_path" ] && [ ! -L "$cache_path" ]; then
+    rm -rf "$cache_path"
+  fi
+  ln -sfn "/tmp/hermes-subprocess-home/$cache_name" "$cache_path"
+done
+export NPM_CONFIG_CACHE=/tmp/hermes-subprocess-home/.npm
+export XDG_CACHE_HOME=/tmp/hermes-subprocess-home/.cache
+export PIP_CACHE_DIR=/tmp/hermes-subprocess-home/.cache/pip
+echo "[storage-guard] subprocess caches redirected to /tmp" >&2
+df -h /data >&2 || true
+
 # Railway volume guard. This deployment has a 500 MB persistent volume, and
 # Hermes can become partially functional when it is full (SQLite/log writes fail
 # while network requests still succeed). Keep durable user state, credentials,
