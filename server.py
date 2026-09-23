@@ -1905,13 +1905,20 @@ async def page_index(request: Request):
 
 
 async def route_health(request: Request):
-    # If Hermes is configured, the public service is only healthy when the
-    # always-on gateway is alive or actively starting. Unconfigured setup mode
-    # stays healthy so the setup UI remains reachable.
+    # If Hermes is configured, health means BOTH the always-on gateway and the
+    # local Telegram voice path are ready. start.sh creates the voice marker
+    # only after re-applying/compiling the adapter patch and checking ffmpeg,
+    # whisper.cpp, the wrapper, and both local models.
     configured = is_config_complete()
-    healthy = (not configured) or gw.state in {"running", "starting"}
+    gateway_ready = gw.state in {"running", "starting"}
+    voice_ready = os.path.exists("/tmp/hermes-voice-ready")
+    healthy = (not configured) or (gateway_ready and voice_ready)
     return JSONResponse(
-        {"status": "ok" if healthy else "degraded", "gateway": gw.state},
+        {
+            "status": "ok" if healthy else "degraded",
+            "gateway": gw.state,
+            "voice_stt": "ready" if voice_ready else "not_ready",
+        },
         status_code=200 if healthy else 503,
     )
 
