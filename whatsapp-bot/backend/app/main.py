@@ -364,11 +364,14 @@ async def conversation_test_status(bid:str,_=Depends(require_admin)):
 
 @app.post('/webhook/whatsapp')
 async def whatsapp_webhook(request:Request):
+    # Evolution API sends our configured secret header. Evolution Go runs in
+    # the same container and posts to the loopback-only webhook URL.
     supplied=request.headers.get('x-webhook-secret','')
-    if not supplied or not hmac.compare_digest(supplied,settings.whatsapp_webhook_secret):
+    is_loopback=bool(request.client and request.client.host in {'127.0.0.1','::1'})
+    if not is_loopback and (not supplied or not hmac.compare_digest(supplied,settings.whatsapp_webhook_secret)):
         return JSONResponse({'ok':False,'error':'unauthorized webhook'},401)
     payload=await request.json(); event=(payload.get('event') or '').lower().replace('_','.')
-    if event not in {'messages.upsert','messages-upsert'}: return {'ok':True}
+    if event not in {'messages.upsert','messages-upsert','message','messages'}: return {'ok':True}
     data=payload.get('data') or {}; key=data.get('key') or {}
     if key.get('fromMe') or key.get('remoteJid','').endswith('@g.us'): return {'ok':True}
     msg=data.get('message') or {}
