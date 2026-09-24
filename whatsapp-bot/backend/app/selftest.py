@@ -1,5 +1,6 @@
 import asyncio
 import json
+import httpx
 from datetime import time
 from uuid import uuid4
 
@@ -117,6 +118,74 @@ async def run_customer_flow(bid, phone, language):
     }
 
 
+async def test_webhook_retry(bid):
+    # Exercise the real FastAPI webhook pipeline with a test-mode tenant.
+    # The first outbound send is deliberately failed. The second delivery of
+    # the same WhatsApp message must resend the cached reply without rerunning
+    # booking/state logic; the third must be treated as a completed duplicate.
+    from .main import app
+    from .config import settings
+
+    phone = "966500000093"
+    mid = "selftest-retry-" + uuid4().hex
+    instance = "test-biz-" + bid.hex
+    payload = {
+        "event": "messages.upsert",
+        "instance": instance,
+        "data": {
+            "key": {
+                "remoteJid": phone + "@s.whatsapp.net",
+                "fromMe": False,
+                "id": mid,
+            },
+            "message": {"conversation": "hello"},
+        },
+    }
+    headers = {"x-webhook-secret": settings.whatsapp_webhook_secret}
+    original_send = evolution.send_text
+    sends = []
+
+    async def flaky_send(instance_name, number, text):
+        sends.append({"instance": instance_name, "number": number, "text": text})
+        if len(sends) == 1:
+            raise RuntimeError("injected outbound failure")
+        return {"ok": True}
+
+    evolution.send_text = flaky_send
+    done_key = f"wa:message:done:{bid}:{mid}"
+    reply_key = f"wa:message:reply:{bid}:{mid}"
+    try:
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://selftest") as client:
+            first = await client.post("/webhook/whatsapp", json=payload, headers=headers)
+            assert first.status_code == 500
+            assert len(sends) == 1
+            assert await state_redis.get(reply_key)
+
+            second = await client.post("/webhook/whatsapp", json=payload, headers=headers)
+            assert second.status_code == 200
+            assert second.json().get("retried") is True
+            assert len(sends) == 2
+            assert sends[0]["text"] == sends[1]["text"]
+            assert await state_redis.get(done_key) == "1"
+            assert await state_redis.get(reply_key) is None
+
+            third = await client.post("/webhook/whatsapp", json=payload, headers=headers)
+            assert third.status_code == 200
+            assert third.json().get("duplicate") is True
+            assert len(sends) == 2
+
+        return {
+            "failed_send_not_marked_done": True,
+            "cached_reply_retried": True,
+            "completed_duplicate_suppressed": True,
+        }
+    finally:
+        evolution.send_text = original_send
+        await state_redis.delete(done_key, reply_key)
+        await clear(bid, phone)
+
+
 async def test_evolution_qr():
     instance = "selftest-" + uuid4().hex
     created = None
@@ -167,6 +236,7 @@ async def main():
         assert count == 2
         result["appointments_created"] = 2
 
+        result["webhook_retry"] = await test_webhook_retry(bid)
         result["evolution"] = await test_evolution_qr()
 
         print("SELFTEST_PASS=" + json.dumps(result, ensure_ascii=False))
