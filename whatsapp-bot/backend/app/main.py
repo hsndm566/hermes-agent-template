@@ -7,7 +7,7 @@ from uuid import UUID,uuid4
 from decimal import Decimal
 from datetime import datetime, time
 from fastapi import FastAPI,Request,Response,Depends,HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from redis.asyncio import Redis
 from .config import settings
 from .db import connect_db,close_db,get_pool
@@ -402,6 +402,107 @@ async def test_message(bid:str,request:Request,_=Depends(require_admin)):
     if not b['whatsapp_session_id'].startswith('test-'): raise HTTPException(400,'Not a test business')
     body=await request.json(); phone=body.get('phone','966500000001'); text=body.get('text','')
     return {'reply':await handle(UUID(bid),phone,text)}
+
+
+@app.get('/', include_in_schema=False)
+async def product_root():
+    return RedirectResponse('/connect', status_code=302)
+
+@app.get('/connect', response_class=HTMLResponse, include_in_schema=False)
+async def connect_whatsapp():
+    return HTMLResponse("""<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Maw3idi WhatsApp Connector</title>
+  <style>
+    :root{color-scheme:dark}*{box-sizing:border-box}
+    body{margin:0;background:#0b1210;color:#eef7f2;font:16px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    main{max-width:720px;margin:0 auto;padding:28px 18px 54px}
+    h1{font-size:30px;margin:0 0 8px}.muted{color:#9eb4aa}.card{background:#12201a;border:1px solid #294238;border-radius:20px;padding:20px;margin-top:18px}
+    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.dot{width:12px;height:12px;border-radius:50%;background:#d39b35}.ok .dot{background:#42d392}
+    #qr{display:block;width:min(360px,100%);margin:18px auto;border-radius:14px;background:#fff;padding:10px}
+    button,input{font:inherit;border-radius:12px;border:1px solid #365246;padding:12px 14px}input{background:#0d1713;color:#fff;flex:1;min-width:220px}
+    button{background:#25d366;color:#06110b;border:0;font-weight:700;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}
+    code{word-break:break-all;color:#bde7d0}#result{white-space:pre-wrap}.hidden{display:none}
+  </style>
+</head>
+<body>
+<main>
+  <h1>Maw3idi WhatsApp Bot</h1>
+  <div class="muted">Connect one WhatsApp account, then prove the bot can send and receive a real message. Nothing else matters yet.</div>
+
+  <section class="card">
+    <div id="stateRow" class="row"><span class="dot"></span><strong id="state">Loading WhatsApp instance…</strong></div>
+    <div id="instance" class="muted"></div>
+    <img id="qr" class="hidden" alt="WhatsApp pairing QR">
+    <div id="scanHelp" class="muted hidden">On the business phone: WhatsApp → Settings → Linked Devices → Link a Device → scan this QR.</div>
+  </section>
+
+  <section class="card">
+    <strong>Real send/receive test</strong>
+    <p class="muted">Use a different WhatsApp account from the business/bot account.</p>
+    <div class="row">
+      <input id="phone" inputmode="tel" placeholder="9665XXXXXXXX">
+      <button id="send" disabled>Send test</button>
+    </div>
+    <p id="result" class="muted">Waiting for WhatsApp to connect.</p>
+  </section>
+</main>
+<script>
+let bid=null, connected=false, lastQr=0;
+const $=id=>document.getElementById(id);
+async function j(url,opts){const r=await fetch(url,opts);let data={};try{data=await r.json()}catch{}if(!r.ok)throw new Error(data.detail||data.error||('HTTP '+r.status));return data}
+async function init(){
+  try{
+    const [businesses,defaults]=await Promise.all([j('/api/businesses'),j('/api/client-defaults')]);
+    if(!businesses.length) throw new Error('No business instance exists');
+    bid=businesses[0].businessId||businesses[0].id;
+    $('instance').textContent='Instance: '+(businesses[0].whatsapp_session_id||bid);
+    if(defaults.test_phone) $('phone').value=defaults.test_phone;
+    await refresh();
+    setInterval(refresh,3000);
+  }catch(e){$('state').textContent='Setup error: '+e.message}
+}
+async function refresh(){
+  if(!bid)return;
+  try{
+    const s=await j('/api/businesses/'+bid+'/connection');
+    const state=((s.instance||{}).state||'unknown').toLowerCase();
+    connected=state==='open'||state==='connected';
+    $('state').textContent=connected?'WhatsApp connected':'WhatsApp not connected — scan QR';
+    $('stateRow').classList.toggle('ok',connected);
+    $('send').disabled=!connected;
+    $('scanHelp').classList.toggle('hidden',connected);
+    if(connected){$('qr').classList.add('hidden');await refreshTest();return}
+    if(Date.now()-lastQr>20000){
+      const q=await j('/api/businesses/'+bid+'/qr');
+      if(q.qr){$('qr').src=q.qr;$('qr').classList.remove('hidden');lastQr=Date.now()}
+    }
+  }catch(e){$('state').textContent='Connection check failed: '+e.message}
+}
+async function refreshTest(){
+  if(!bid)return;
+  try{
+    const t=await j('/api/businesses/'+bid+'/conversation-test-status');
+    if(t.ok){$('result').textContent='✅ SEND + RECEIVE PASSED\\nLast inbound: '+(t.last_inbound_text||'(message received)')}
+    else if(t.started_at){$('result').textContent='Test sent. Reply from '+($('phone').value||'the test phone')+' and keep this page open.'}
+  }catch{}
+}
+$('send').onclick=async()=>{
+  $('send').disabled=true;$('result').textContent='Sending test message…';
+  try{
+    const data=await j('/api/businesses/'+bid+'/test-message',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({phone:$('phone').value,language:'ar'})});
+    $('result').textContent='✅ Outbound sent to '+data.phone+'. Reply to it now; inbound verification will update automatically.';
+    setTimeout(refreshTest,1500);
+  }catch(e){$('result').textContent='❌ '+e.message}
+  finally{$('send').disabled=!connected}
+};
+init();
+</script>
+</body>
+</html>""")
 
 
 # The VPS profile serves static assets through Nginx. The Railway profile copies
