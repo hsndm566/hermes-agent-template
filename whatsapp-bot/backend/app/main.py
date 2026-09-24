@@ -388,12 +388,49 @@ async def whatsapp_webhook(request:Request):
         await p.execute('''INSERT INTO settings(id,"businessId",key,value) VALUES($1,$2,$3,$4)
             ON CONFLICT ("businessId",key) DO UPDATE SET value=EXCLUDED.value''',uuid4(),bid,sk,sv)
     mid=key.get('id')
-    if mid and not await r.set(f'wa:message:{bid}:{mid}','1',nx=True,ex=86400): return {'ok':True,'duplicate':True}
-    lock=r.lock(f'wa:lock:{bid}:{phone}',timeout=15,blocking_timeout=5)
-    async with lock:
-        reply=await handle(bid,phone,text)
-    await evolution.send_text(instance,phone,reply)
-    return {'ok':True}
+    done_key=f'wa:message:done:{bid}:{mid}' if mid else None
+    reply_key=f'wa:message:reply:{bid}:{mid}' if mid else None
+
+    # A WhatsApp delivery is only "done" after both the booking logic and the
+    # outbound reply succeed. Cache the generated reply before sending it so an
+    # Evolution retry can resend the same reply without running booking logic
+    # twice (important if the send succeeded partially or the HTTP call failed).
+    if done_key and await r.get(done_key):
+        return {'ok':True,'duplicate':True}
+
+    async def process_message():
+        user_lock=r.lock(f'wa:lock:{bid}:{phone}',timeout=45,blocking_timeout=10)
+        async with user_lock:
+            if done_key and await r.get(done_key):
+                return {'ok':True,'duplicate':True}
+
+            cached_reply=await r.get(reply_key) if reply_key else None
+            if cached_reply:
+                await evolution.send_text(instance,phone,cached_reply)
+                pipe=r.pipeline()
+                pipe.set(done_key,'1',ex=86400)
+                pipe.delete(reply_key)
+                await pipe.execute()
+                return {'ok':True,'retried':True}
+
+            reply=await handle(bid,phone,text)
+            if reply_key:
+                await r.set(reply_key,reply,ex=86400)
+
+            await evolution.send_text(instance,phone,reply)
+
+            if done_key:
+                pipe=r.pipeline()
+                pipe.set(done_key,'1',ex=86400)
+                pipe.delete(reply_key)
+                await pipe.execute()
+            return {'ok':True}
+
+    if mid:
+        message_lock=r.lock(f'wa:message-lock:{bid}:{mid}',timeout=60,blocking_timeout=10)
+        async with message_lock:
+            return await process_message()
+    return await process_message()
 
 @app.post('/api/test/businesses/{bid}/message')
 async def test_message(bid:str,request:Request,_=Depends(require_admin)):
