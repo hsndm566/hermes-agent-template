@@ -218,6 +218,13 @@ HERMES_DASHBOARD_HOST = "127.0.0.1"
 HERMES_DASHBOARD_PORT = int(os.environ.get("HERMES_DASHBOARD_PORT", "9119"))
 HERMES_DASHBOARD_URL = f"http://{HERMES_DASHBOARD_HOST}:{HERMES_DASHBOARD_PORT}"
 
+# Hermes' OpenAI-compatible API server stays loopback-only. Public callers go
+# through the narrow /agent-api proxy below, which exposes only liveness and
+# non-streaming chat completions and keeps API_SERVER_KEY off the browser.
+HERMES_API_SERVER_HOST = "127.0.0.1"
+HERMES_API_SERVER_PORT = int(os.environ.get("API_SERVER_PORT", "8642"))
+HERMES_API_SERVER_URL = f"http://{HERMES_API_SERVER_HOST}:{HERMES_API_SERVER_PORT}"
+
 # Header hermes' own SPA uses to present its per-process session token
 # (hermes_cli/web_server.py's _SESSION_HEADER_NAME) — see
 # set_active_model_via_hermes()/_get_hermes_session_token() for why our own
@@ -322,6 +329,10 @@ ENV_VARS = [
     ("SLACK_BOT_TOKEN",          "Bot Token (xoxb-...)",     "slack",     True),
     ("SLACK_APP_TOKEN",          "App Token (xapp-...)",     "slack",     True),
     ("WHATSAPP_ENABLED",         "Enable WhatsApp",          "whatsapp",  False),
+    ("API_SERVER_ENABLED",       "Enable website API",       "gateway",   False),
+    ("API_SERVER_KEY",           "Website API key",          "gateway",   True),
+    ("API_SERVER_MODEL_NAME",    "Website API model name",   "gateway",   False),
+    ("PUBLIC_WEB_CHAT_MODE",     "Restrict website API tools","gateway",   False),
     ("EMAIL_ADDRESS",            "Email Address",            "email",     False),
     ("EMAIL_PASSWORD",           "Email Password",           "email",     True),
     ("EMAIL_IMAP_HOST",          "IMAP Host",                "email",     False),
@@ -807,6 +818,11 @@ def build_hermes_env() -> dict[str, str]:
     # long as the container. /tmp gives it that and nothing more; hermes mkdirs
     # the path itself. setdefault, so a Railway variable can move it back.
     env.setdefault("HERMES_GATEWAY_LOCK_DIR", "/tmp/hermes-gateway-locks")
+    # Heroku/Railway expose only the template's main $PORT. Keep Hermes' API
+    # server private on loopback and surface it only through /agent-api.
+    if str(env.get("API_SERVER_ENABLED", "")).strip().lower() == "true":
+        env["API_SERVER_HOST"] = HERMES_API_SERVER_HOST
+        env["API_SERVER_PORT"] = str(HERMES_API_SERVER_PORT)
     # Drop inbound values first: the template is the only thing allowed to
     # decide these (this pop covers a Railway service variable, which lands in
     # our own os.environ; _sanitize_env_file() covers the .env file).
@@ -2625,6 +2641,134 @@ async def api_backup_restore(request: Request) -> Response:
             upload_path.unlink(missing_ok=True)
 
 
+def _public_web_chat_mode_enabled() -> bool:
+    env = build_hermes_env()
+    return str(env.get("PUBLIC_WEB_CHAT_MODE", "")).strip().lower() == "true"
+
+
+def _enforce_public_web_chat_tool_policy() -> None:
+    """Restrict the api_server platform without changing trusted chat channels.
+
+    Hermes' default API-server toolset includes terminal/file/browser-class
+    capabilities. That is appropriate for an authenticated personal frontend,
+    but not for an anonymous public website. When PUBLIC_WEB_CHAT_MODE=true we
+    make api_server an explicit minimal platform: only the local todo helper is
+    selectable and every configured MCP/plugin toolset is treated as known but
+    disabled. Telegram/WhatsApp/CLI platform toolsets remain untouched.
+    """
+    if not _public_web_chat_mode_enabled():
+        return
+    try:
+        import yaml
+        from hermes_cli.plugins import discover_plugins, get_plugin_toolsets
+        from hermes_cli.tools_config import CONFIGURABLE_TOOLSETS
+
+        config_path = Path(HERMES_HOME) / "config.yaml"
+        if config_path.exists():
+            loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            data = loaded if isinstance(loaded, dict) else {}
+        else:
+            data = {}
+
+        platform_toolsets = data.setdefault("platform_toolsets", {})
+        if not isinstance(platform_toolsets, dict):
+            platform_toolsets = {}
+            data["platform_toolsets"] = platform_toolsets
+        platform_toolsets["api_server"] = ["todo", "no_mcp"]
+
+        known_builtin = data.setdefault("known_builtin_toolsets", {})
+        if not isinstance(known_builtin, dict):
+            known_builtin = {}
+            data["known_builtin_toolsets"] = known_builtin
+        known_builtin["api_server"] = sorted(
+            str(item[0]) for item in CONFIGURABLE_TOOLSETS
+        )
+
+        try:
+            discover_plugins()
+            plugin_names = sorted(str(item[0]) for item in get_plugin_toolsets())
+        except Exception:
+            plugin_names = []
+        known_plugins = data.setdefault("known_plugin_toolsets", {})
+        if not isinstance(known_plugins, dict):
+            known_plugins = {}
+            data["known_plugin_toolsets"] = known_plugins
+        known_plugins["api_server"] = plugin_names
+
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+        print("[api-server] public web tool policy enforced for api_server only", flush=True)
+    except Exception as exc:
+        # A public API must fail closed if we cannot prove its tool policy.
+        print(f"[api-server] could not enforce public web tool policy: {type(exc).__name__}", flush=True)
+        os.environ["API_SERVER_ENABLED"] = "false"
+        try:
+            env_data = read_env(ENV_FILE)
+            env_data["API_SERVER_ENABLED"] = "false"
+            write_env(ENV_FILE, env_data)
+        except Exception:
+            pass
+
+
+async def api_server_proxy(request: Request) -> Response:
+    """Narrow authenticated bridge from public $PORT to Hermes loopback API."""
+    env = build_hermes_env()
+    if str(env.get("API_SERVER_ENABLED", "")).strip().lower() != "true":
+        return JSONResponse({"error": "chat unavailable"}, status_code=503)
+
+    api_key = str(env.get("API_SERVER_KEY", "")).strip()
+    auth = request.headers.get("authorization", "")
+    if not api_key or not auth.startswith("Bearer ") or not secrets.compare_digest(auth[7:], api_key):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+    suffix = str(request.path_params.get("path") or "").strip("/")
+    allowed = {
+        ("GET", "health"): "/health",
+        ("POST", "v1/chat/completions"): "/v1/chat/completions",
+    }
+    upstream_path = allowed.get((request.method.upper(), suffix))
+    if upstream_path is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    body = await request.body()
+    if len(body) > 80_000:
+        return JSONResponse({"error": "request too large"}, status_code=413)
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json",
+    }
+    content_type = request.headers.get("content-type")
+    if content_type:
+        headers["Content-Type"] = content_type
+
+    try:
+        upstream = await get_http_client().request(
+            request.method,
+            f"{HERMES_API_SERVER_URL}{upstream_path}",
+            headers=headers,
+            content=body,
+            timeout=45.0,
+        )
+    except httpx.RequestError:
+        return JSONResponse({"error": "chat unavailable"}, status_code=503)
+
+    response_headers = {
+        k: v for k, v in upstream.headers.items()
+        if k.lower() not in HOP_BY_HOP
+        and k.lower() not in {"content-length", "content-encoding", "set-cookie"}
+    }
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers=response_headers,
+        media_type=upstream.headers.get("content-type"),
+    )
+
+
 # ── Reverse proxy → Hermes dashboard ──────────────────────────────────────────
 _WIDGET_LINK_STYLE = (
     "background:rgba(20,24,31,0.92);backdrop-filter:blur(8px);"
@@ -3004,6 +3148,7 @@ async def route_setup_404(request: Request) -> Response:
 
 # ── App lifecycle ─────────────────────────────────────────────────────────────
 async def auto_start():
+    _enforce_public_web_chat_tool_policy()
     if is_config_complete():
         asyncio.create_task(gw.start())
     else:
@@ -3295,6 +3440,10 @@ routes = [
     Route("/setup/api/backup/restore",          api_backup_restore,  methods=["POST"]),
     Route("/setup/api/backup/snapshots",        api_backup_snapshots),
     Route("/setup/api/backup/snapshots/{name}", api_backup_snapshot_download),
+
+    # Public web-chat bridge. This is intentionally separate from admin auth:
+    # it accepts only the dedicated API_SERVER_KEY and only two allowlisted paths.
+    Route("/agent-api/{path:path}",             api_server_proxy,    methods=["GET", "POST"]),
 
     # /setup/* typos return a real 404 — not a silent proxy fallthrough.
     Route("/setup/{path:path}",                 route_setup_404,     methods=ANY_METHOD),
