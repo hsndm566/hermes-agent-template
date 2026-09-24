@@ -1,4 +1,5 @@
 import json,re
+import asyncpg
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from redis.asyncio import Redis
@@ -229,10 +230,12 @@ async def finalize(bid,phone,st,name):
     lang=st['lang']
     try:
         ap=await booking.create_appointment(bid,phone,st['service_id'],st['slot'])
-    except Exception:
+    except asyncpg.exceptions.ExclusionViolationError:
         slots=await booking.available_slots(bid,st['service_id'])
         st['slots']=slots; st['step']='slot'
         await set_state(bid,phone,st)
+        if not slots:
+            return t(lang,'هذا الموعد لم يعد متاحاً ولا توجد أوقات بديلة خلال 7 أيام.','That slot is no longer available and there are no alternative times in the next 7 days.')
         return t(lang,'هذا الموعد تم حجزه للتو. اختر وقتاً آخر.\n','That slot was just booked. Choose another time.\n')+slots_text(slots,lang)
     await booking.upsert_customer(bid,phone,name,lang)
     biz=await booking.business(bid)
