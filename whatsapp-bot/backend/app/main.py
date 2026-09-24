@@ -133,6 +133,39 @@ def qr_value(data):
     q=data.get('qrcode') or data
     return q.get('base64') if isinstance(q,dict) else None
 
+@app.get('/pair/{token}', response_class=HTMLResponse)
+async def pair_whatsapp(token: str):
+    expected=(settings.pairing_token or '').strip()
+    if not expected or not hmac.compare_digest(token,expected):
+        raise HTTPException(404,'Not found')
+    p=await get_pool()
+    b=await p.fetchrow("""SELECT * FROM businesses
+        WHERE whatsapp_session_id NOT LIKE 'test-%'
+        ORDER BY created_at DESC LIMIT 1""")
+    if not b:
+        raise HTTPException(404,'No WhatsApp business configured')
+    state=await evolution.state(b['whatsapp_session_id'])
+    current=(state.get('instance') or {}).get('state') if isinstance(state,dict) else 'unknown'
+    if current in {'open','connected'}:
+        return HTMLResponse("""<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1"><title>موعدي</title>
+        <body style="font-family:system-ui;background:#10251e;color:white;text-align:center;padding:40px">
+        <h1>تم اتصال واتساب ✅</h1><p>الآن أرسل رسالة إلى رقم البوت من رقم واتساب آخر لاختبار الرد.</p></body></html>""",
+        headers={'Cache-Control':'no-store'})
+    data=await evolution.connect(b['whatsapp_session_id'])
+    qr=qr_value(data)
+    if not qr:
+        raise HTTPException(503,'QR is not available yet; reload in a few seconds')
+    return HTMLResponse(f"""<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="20">
+    <title>ربط واتساب | موعدي</title>
+    <body style="font-family:system-ui;background:#10251e;color:white;text-align:center;padding:24px">
+    <h1>موعدي — ربط واتساب</h1><p>الحالة: {current}</p>
+    <img src="{qr}" alt="WhatsApp QR" style="width:min(88vw,380px);background:white;padding:12px;border-radius:20px">
+    <p>واتساب ← الإعدادات ← الأجهزة المرتبطة ← ربط جهاز</p>
+    <small>تتجدد الصفحة تلقائياً كل 20 ثانية.</small></body></html>""",
+    headers={'Cache-Control':'no-store'})
+
 @app.post('/api/businesses')
 async def add_business(body:BusinessIn,_=Depends(require_admin)):
     bid=uuid4(); instance=('test-biz-' if body.test_mode else 'biz-')+bid.hex
