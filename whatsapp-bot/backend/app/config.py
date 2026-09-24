@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     tz: str = "Asia/Riyadh"
     enable_test_mode: bool = False
     default_test_phone: str = ""
+    pairing_token: str = ""
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()
