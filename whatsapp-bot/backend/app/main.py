@@ -404,10 +404,6 @@ async def test_message(bid:str,request:Request,_=Depends(require_admin)):
     return {'reply':await handle(UUID(bid),phone,text)}
 
 
-@app.get('/', include_in_schema=False)
-async def product_root():
-    return RedirectResponse('/connect', status_code=302)
-
 @app.get('/connect', response_class=HTMLResponse, include_in_schema=False)
 async def connect_whatsapp():
     return HTMLResponse("""<!doctype html>
@@ -503,6 +499,11 @@ init();
 </script>
 </body>
 </html>""")
+
+
+@app.get('/', response_class=HTMLResponse, include_in_schema=False)
+async def product_root():
+    return await connect_whatsapp()
 
 
 # The VPS profile serves static assets through Nginx. The Railway profile copies
