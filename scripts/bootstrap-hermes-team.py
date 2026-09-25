@@ -2,8 +2,10 @@
 """Idempotent Hermes multi-agent team bootstrap for the Railway deployment.
 
 Creates persistent specialist profiles, enables the default gateway multiplexer,
-marks the install as Bot-Mode-managed, and optionally wires one Telegram token
-per specialist from Railway variables. Secrets are never logged.
+and marks the install as Bot-Mode-managed. Telegram enters through the Coordinator
+by default; specialists communicate internally through Hermes Bot Mode. Optional
+dedicated specialist bot tokens remain supported but are not required. Secrets
+are never logged.
 """
 
 from __future__ import annotations
@@ -60,7 +62,7 @@ COORDINATOR_BLOCK = """
 
 You are the Coordinator for a hub-and-spoke team with persistent specialist profiles named marketing, auditor, and cfo. Receive the human's task, decide whether specialist work is useful, decompose the work, and consolidate the evidence into one answer.
 
-Use native Hermes delegation for immediate parallel specialist work from ordinary Telegram conversations. Give each delegated child a precise role matching Marketing, Auditor, or CFO. For persistent Bot-Mode conversations, use the teammate roster and message_agent when it is available. Do not claim a specialist completed work unless its result actually returned. Use the Auditor to challenge high-impact or completion claims before presenting them as verified. Keep the human in control of consequential external actions.
+Telegram is a Coordinator-only ingress by default. Marketing, Auditor, and CFO are persistent internal Hermes profiles and do not need their own Telegram bot tokens to work. Use native Hermes delegation for immediate specialist work from ordinary Telegram conversations. Give each delegated child a precise role matching Marketing, Auditor, or CFO. For persistent Bot-Mode conversations, use the teammate roster and message_agent when it is available. Do not claim a specialist completed work unless its result actually returned. Use the Auditor to challenge high-impact or completion claims before presenting them as verified. Keep the human in control of consequential external actions.
 <!-- /HERMES_MULTI_AGENT_COORDINATOR_V1 -->
 """.lstrip()
 
@@ -308,6 +310,8 @@ def configure() -> int:
         "configured": True,
         "multiplex_profiles": True,
         "coordinator": "default",
+        "telegram_topology": "coordinator-ingress/internal-specialists",
+        "specialist_telegram_tokens_required": False,
         "profiles": {},
         "local_stt": "faster-whisper/base-baked-cpu-int8",
     }
@@ -318,6 +322,7 @@ def configure() -> int:
         entry = {
             "profile_ready": ok,
             "telegram_token_configured": bool(token),
+            "telegram_mode": "optional-dedicated" if token else "internal-bot-mode",
             "bot_mode_marked": False,
         }
         if ok:
@@ -332,7 +337,7 @@ def configure() -> int:
             entry["bot_mode_marked"] = True
         status["profiles"][name] = entry
         print(
-            f"[team] profile={name} ready={ok} telegram={'configured' if token else 'awaiting-token'}",
+            f"[team] profile={name} ready={ok} telegram={'optional-dedicated' if token else 'internal-bot-mode'}",
             flush=True,
         )
 
