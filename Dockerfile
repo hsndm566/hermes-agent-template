@@ -76,7 +76,7 @@ COPY scripts/patch-hermes-telegram-voice.py /app/scripts/patch-hermes-telegram-v
 RUN git clone --depth 1 --branch ${HERMES_REF} https://github.com/NousResearch/hermes-agent.git /opt/hermes-agent && \
     python /tmp/patch-hermes-telegram-voice.py && \
     cd /opt/hermes-agent && \
-    uv pip install --system --no-cache -e ".[all,messaging,tts-premium,honcho,bedrock,anthropic,edge-tts,hindsight,vision,stt-whisper]" && \
+    uv pip install --system --no-cache -e ".[all,messaging,tts-premium,honcho,bedrock,anthropic,edge-tts,hindsight,vision,voice]" && \
     cd /opt/hermes-agent/web && \
     npm install --silent && \
     npm run build && \
