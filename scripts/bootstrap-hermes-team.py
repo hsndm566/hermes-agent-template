@@ -500,58 +500,85 @@ if not seen:
 
 
 def native_delegation_smoke() -> int:
-    """One-time Coordinator -> Marketing Bot Mode handoff test."""
-    marker = ROOT / "team" / ".native_delegation_smoke_v1"
+    """One-time verified Coordinator round-trip through every specialist Bot."""
+
+    marker = ROOT / "team" / ".native_delegation_smoke_v2"
     if marker.exists():
-        print("[team-smoke] already passed", flush=True)
+        print("[team-smoke] already passed v2", flush=True)
         return 0
 
-    send_prompt = (
-        "Deployment smoke test. Use message_agent to send exactly one message to @marketing. "
-        "Your composed message must ask Marketing to reply to you with exactly MARKETING_OK. "
-        "Do not use delegate_task and do not claim success unless message_agent acknowledges the send. "
-        "After sending, reply exactly TEAM_SMOKE_SENT."
-    )
-    first = run([
-        "hermes", "-p", "default", "chat", "--in", "/data", "-c", "Bot Chat",
-        "--create-if-missing", "-Q", "-q", send_prompt,
-    ], timeout=240)
-    first_text = first.stdout or ""
-    if first.returncode != 0 or "TEAM_SMOKE_SENT" not in first_text:
-        print(f"[team-smoke] coordinator send failed rc={first.returncode}", flush=True)
-        return 1
-
-    # message_agent is fire-and-forget. Give the Marketing Bot Chat time to
-    # complete and send its attributed reply into the Coordinator Bot Chat.
     import time
-    for attempt in range(3):
-        time.sleep(20 if attempt == 0 else 15)
-        check_prompt = (
-            "Verify the deployment smoke test from the actual Bot Chat history. "
-            "Only if you can see an attributed teammate message from @marketing containing MARKETING_OK, "
-            "reply exactly TEAM_SMOKE_OK. Otherwise reply exactly TEAM_SMOKE_PENDING. Do not infer or fabricate."
-        )
-        check = run([
-            "hermes", "-p", "default", "chat", "--in", "/data", "-c", "Bot Chat",
-            "--create-if-missing", "-Q", "-q", check_prompt,
-        ], timeout=240)
-        text_out = check.stdout or ""
-        if check.returncode == 0 and "TEAM_SMOKE_OK" in text_out:
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text("pass\n", encoding="utf-8")
-            try:
-                status = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
-            except Exception:
-                status = {}
-            status["native_delegation_smoke"] = {
-                "coordinator_to_marketing": True,
-                "verified_reply": "MARKETING_OK",
-            }
-            STATUS_PATH.write_text(json.dumps(status, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-            print("[team-smoke] PASS coordinator->marketing->coordinator", flush=True)
-            return 0
 
-    print("[team-smoke] PENDING no verified Marketing reply observed", flush=True)
+    results: dict[str, bool] = {}
+    for profile in ("marketing", "auditor", "cfo"):
+        code = f"{profile.upper()}_OK"
+        sent_code = f"TEAM_SMOKE_SENT_{profile.upper()}"
+        ok_code = f"TEAM_SMOKE_OK_{profile.upper()}"
+
+        send_prompt = (
+            f"Deployment smoke test for @{profile}. Use message_agent to send exactly one message "
+            f"to @{profile}. Ask that teammate to reply to you with exactly {code}. "
+            "Do not use delegate_task. Do not invent a reply. "
+            f"After message_agent acknowledges the send, reply exactly {sent_code}."
+        )
+        first = run([
+            "hermes", "-p", "default", "chat", "--in", "/data", "-c", "Bot Chat",
+            "--create-if-missing", "-Q", "-q", send_prompt,
+        ], timeout=240)
+        first_text = first.stdout or ""
+        if first.returncode != 0 or sent_code not in first_text:
+            print(f"[team-smoke] send failed profile={profile} rc={first.returncode}", flush=True)
+            results[profile] = False
+            break
+
+        verified = False
+        for attempt in range(3):
+            time.sleep(15 if attempt == 0 else 10)
+            check_prompt = (
+                "Verify the deployment smoke test from actual Bot Chat history. "
+                f"Only if you can see an attributed teammate message from @{profile} containing {code}, "
+                f"reply exactly {ok_code}. Otherwise reply exactly TEAM_SMOKE_PENDING. "
+                "Do not infer, summarize, or fabricate."
+            )
+            check = run([
+                "hermes", "-p", "default", "chat", "--in", "/data", "-c", "Bot Chat",
+                "--create-if-missing", "-Q", "-q", check_prompt,
+            ], timeout=240)
+            text_out = check.stdout or ""
+            if check.returncode == 0 and ok_code in text_out:
+                verified = True
+                break
+
+        results[profile] = verified
+        print(
+            f"[team-smoke] profile={profile} roundtrip={'PASS' if verified else 'FAIL'}",
+            flush=True,
+        )
+        if not verified:
+            break
+
+    all_ok = all(results.get(name, False) for name in ("marketing", "auditor", "cfo"))
+    try:
+        status = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        status = {}
+    status["native_delegation_smoke"] = {
+        "version": 2,
+        "coordinator_to_marketing": bool(results.get("marketing")),
+        "coordinator_to_auditor": bool(results.get("auditor")),
+        "coordinator_to_cfo": bool(results.get("cfo")),
+        "auditor_verified": bool(results.get("auditor")),
+        "passed": all_ok,
+    }
+    STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    STATUS_PATH.write_text(json.dumps(status, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    if all_ok:
+        marker.write_text("pass\n", encoding="utf-8")
+        print("[team-smoke] PASS coordinator<->marketing/auditor/cfo", flush=True)
+        return 0
+
+    print("[team-smoke] FAIL at least one specialist round-trip was not verified", flush=True)
     return 1
 
 
