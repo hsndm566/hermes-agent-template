@@ -506,16 +506,12 @@ fi
 rm -f /data/.hermes/gateway.pid /data/.hermes/gateway.lock /data/.hermes/gateway.sock
 
 
-# Durable lazy-install target for opt-in backends (supermemory, mem0, firecrawl, etc.).
-# The template installs hermes into system Python (`uv pip install --system`) with no
-# venv, so `uv pip install` at runtime fails with "No virtual environment found." Set
-# HERMES_LAZY_INSTALL_TARGET to redirect runtime package installs into a writable dir
-# on the persistent volume — same mechanism the official Docker image bakes in. This
-# must be exported so the gateway process inherits it; hermes_bootstrap.py activates it
-# at startup. Without it, any lazy dep (including opt-in providers like supermemory)
-# fails on every fresh container deploy.
-mkdir -p /data/.hermes/lazy-packages
-export HERMES_LAZY_INSTALL_TARGET=/data/.hermes/lazy-packages
+# Lazy-installed backends are reproducible runtime artifacts, not durable user state.
+# Put them on Railway's ephemeral filesystem so they can never fill the 500 MB volume.
+# Core/required integrations are already baked into the image; an optional lazy backend
+# may reinstall after a redeploy, which is a safer tradeoff on Trial/Free.
+mkdir -p /tmp/hermes-lazy-packages
+export HERMES_LAZY_INSTALL_TARGET=/tmp/hermes-lazy-packages
 
 # HERMES_DASHBOARD_PUBLIC_URL is deliberately NOT exported here. server.py owns
 # it: build_hermes_env() sets it only alongside the basic-auth credentials that
@@ -820,6 +816,9 @@ install_skill_if_missing() {
 # Install third-party/optional skills in the background so a slow registry
 # can never hold the Telegram gateway's health check hostage.
 (
+# Stagger non-critical post-boot work so the 1 GB Trial service never launches
+# skill installation, certification, Bot Chat initialization, and archive work at once.
+sleep 30
 # Official / bundled knowledge and web capabilities.
 install_skill_if_missing qmd official/research/qmd
 install_skill_if_missing scrapling official/research/scrapling
@@ -893,7 +892,7 @@ echo "[skills] background installer started"
 # durable snapshots/log archives. The worker is a no-op until Hermes' own Google
 # OAuth token exists. Archives are built under /tmp, never on the persistent disk.
 (
-  sleep 20
+  sleep 180
   while true; do
     python /app/scripts/hermes-drive-archive.py || true
     sleep 21600
@@ -917,6 +916,9 @@ mkdir -p "$HERMES_DB_BASE_DIR"
 if ! python /app/scripts/bootstrap-hermes-team.py configure; then
   echo "[team] bootstrap incomplete; keeping Coordinator online and retrying next deploy" >&2
 fi
+echo "[team-storage] after specialist profile compaction:" >&2
+du -sm /data/.hermes/profiles 2>/dev/null >&2 || true
+df -h /data >&2 || true
 
 # Sync the same persistent profiles into the pinned hierarchy registry. This
 # provides the org chart + IPC/shared state; actual agent execution stays on
@@ -930,7 +932,7 @@ fi
 # Initialize them after the server/gateway has had time to start. This is
 # idempotent and never blocks Railway health or Coordinator availability.
 (
-  sleep 20
+  sleep 75
   python /app/scripts/bootstrap-hermes-team.py init-chats || true
   sleep 5
   python /app/scripts/bootstrap-hermes-team.py smoke-test || true
@@ -943,7 +945,7 @@ echo "[team] Bot Chat initializer + native delegation smoke test scheduled" >&2
 # Second boot proves the /data sentinel survived a real redeploy.
 # Later boots perform only the cheap static integrity check.
 (
-  sleep 8
+  sleep 12
   set +e
   mkdir -p /data/.hermes/logs
   python /app/personalization/scripts/final_certify.py 2>&1 | tee -a /data/.hermes/logs/final-certification.log
