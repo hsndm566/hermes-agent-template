@@ -216,6 +216,39 @@ def ensure_config(home: Path, *, toolsets: list[str] | None = None, token_presen
     write_yaml(path, data)
 
 
+def compact_initial_cloned_skills(home: Path) -> None:
+    """Reclaim the one-time --clone-from default skill copy.
+
+    Hermes v2026.9.11 intentionally copies the entire source skills tree for a
+    config clone. On this 500 MB Railway volume that costs roughly 80 MB per
+    specialist. These profiles were created by this bootstrap and have not yet
+    received user-installed specialist skills, so compact the initial clone
+    once. A persistent marker guarantees later user-installed skills are never
+    touched. Hermes keeps the rest of the profile fully isolated.
+    """
+    marker = home / ".team_initial_skill_clone_compacted_v1"
+    if marker.exists():
+        return
+    skills = home / "skills"
+    try:
+        if skills.is_symlink():
+            skills.unlink()
+        elif skills.exists():
+            shutil.rmtree(skills)
+        skills.mkdir(parents=True, exist_ok=True)
+        # Prevent hermes update/dashboard from immediately re-seeding the full
+        # bundled skill set into this specialist. Users can still install any
+        # skill explicitly later.
+        (home / ".no-bundled-skills").write_text(
+            "Managed specialist profile: install only skills this agent needs.\n",
+            encoding="utf-8",
+        )
+        marker.write_text("compacted\n", encoding="utf-8")
+        print(f"[team] reclaimed initial cloned skills profile={home.name}", flush=True)
+    except Exception as exc:
+        print(f"[team] skill compaction deferred profile={home.name} error={type(exc).__name__}", flush=True)
+
+
 def ensure_specialist_env(home: Path, token: str) -> None:
     env_path = home / ".env"
     data = read_env(env_path)
@@ -289,6 +322,7 @@ def configure() -> int:
         }
         if ok:
             home = PROFILES / name
+            compact_initial_cloned_skills(home)
             (home / "SOUL.md").write_text(spec["soul"], encoding="utf-8")
             ensure_bot_metadata(home, title=spec["title"], description=spec["description"])
             ensure_specialist_env(home, token)
