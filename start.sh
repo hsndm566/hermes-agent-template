@@ -33,14 +33,10 @@ grep -Fq '[Telegram] Pre-transcribed user voice' "$VOICE_ADAPTER"
 grep -Fq 'attempts = 3 if kind == "voice" else 1' "$VOICE_ADAPTER"
 command -v ffmpeg >/dev/null
 python -c 'import faster_whisper; from faster_whisper import WhisperModel'
-# Retain the already-baked whisper.cpp binaries as an emergency local fallback,
-# but Hermes' configured provider below is faster-whisper.
-command -v whisper-cli >/dev/null
-test -x /usr/local/bin/hermes-whisper-stt
-test -s /opt/whisper-models/ggml-small-q5_1.bin
-test -s /opt/whisper-models/ggml-base-q5_1.bin
+test -s /opt/faster-whisper-models/base/model.bin
+test -s /opt/faster-whisper-models/base/config.json
 touch "$VOICE_READY"
-echo "[voice-preflight] READY telegram_patch=on stt=faster-whisper model=base cpu=int8 fallback=whisper.cpp"
+echo "[voice-preflight] READY telegram_patch=on stt=faster-whisper model=base-baked cpu=int8 fallback=none"
 
 # Stamp the install method as "docker" so hermes treats this as an immutable
 # container image, not a pip checkout. hermes's detect_install_method() reads
@@ -75,6 +71,15 @@ done
 export NPM_CONFIG_CACHE=/tmp/hermes-subprocess-home/.npm
 export XDG_CACHE_HOME=/tmp/hermes-subprocess-home/.cache
 export PIP_CACHE_DIR=/tmp/hermes-subprocess-home/.cache/pip
+export HF_HOME=/tmp/hermes-subprocess-home/.cache/huggingface
+export HUGGINGFACE_HUB_CACHE=/tmp/hermes-subprocess-home/.cache/huggingface/hub
+# Keep CPU inference inside the Free/Trial memory envelope. These are inherited
+# by the Hermes gateway and faster-whisper CTranslate2 worker.
+export MALLOC_ARENA_MAX=2
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export TOKENIZERS_PARALLELISM=false
 echo "[storage-guard] subprocess caches redirected to /tmp" >&2
 df -h /data >&2 || true
 
@@ -271,12 +276,13 @@ stt["language"] = ""
 local_stt = stt.get("local")
 if not isinstance(local_stt, dict):
     local_stt = {}
-local_stt["model"] = "base"
+local_stt["model"] = "/opt/faster-whisper-models/base"
 local_stt["device"] = "cpu"
 local_stt["compute_type"] = "int8"
-# Release model memory when idle on the 1 GB Railway service. It reloads
-# transparently on the next voice note.
-local_stt["unload_after_idle_seconds"] = 300
+# Release model memory aggressively on the 1 GB Railway trial service. The
+# model is baked into the image, so reloading does not consume network or the
+# 500 MB persistent volume.
+local_stt["unload_after_idle_seconds"] = 60
 stt["local"] = local_stt
 data["stt"] = stt
 
@@ -325,7 +331,7 @@ print(
     f"main={main} aliases={','.join(sorted(aliases)) or 'none'} "
     f"fallbacks={len(fallbacks)} "
     f"vision={'gemma4:31b-cloud' if ollama_ready else 'default'} "
-    f"stt=local/faster-whisper-base-cpu-int8",
+    f"stt=local/faster-whisper-base-baked-cpu-int8",
     flush=True,
 )
 PY
