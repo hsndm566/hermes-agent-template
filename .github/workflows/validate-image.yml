@@ -44,7 +44,7 @@ jobs:
           docker run --rm --entrypoint sh hermes-agent:ci -lc '
             set -eu
             python -c "import faster_whisper; from faster_whisper import WhisperModel"
-            python -c "from faster_whisper import WhisperModel; WhisperModel(\\"/opt/faster-whisper-models/base\\", device=\\"cpu\\", compute_type=\\"int8\\"); print(\\"LOCAL_MODEL_LOAD_OK\\")"
+            python -c "from faster_whisper import WhisperModel; import sys; WhisperModel(sys.argv[1], device=sys.argv[2], compute_type=sys.argv[3]); print(sys.argv[4])" /opt/faster-whisper-models/base cpu int8 LOCAL_MODEL_LOAD_OK
             test -s /opt/faster-whisper-models/base/model.bin
             test -s /opt/faster-whisper-models/base/config.json
             /opt/hierarchy-venv/bin/python -c "from core.registry.profile_registry import ProfileRegistry; from core.ipc.message_bus import MessageBus"
