@@ -33,7 +33,7 @@ ENV HERMES_REF=${HERMES_REF}
 # `node >=22.22.0` + `npm <11.10.0 || >=11.17.0` is now a hard EBADENGINE build
 # failure, not a warning — setup_24.x bundles an npm that satisfies neither.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl ca-certificates git gh tini build-essential cmake ffmpeg && \
+    apt-get install -y --no-install-recommends curl ca-certificates git gh tini build-essential ffmpeg && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
@@ -113,28 +113,13 @@ RUN git clone --depth 1 --branch ${HERMES_REF} https://github.com/NousResearch/h
 RUN printf 'docker\n' > /opt/hermes-agent/.install_method
 
 # Local open-source speech-to-text for Telegram voice notes.
-# Pin whisper.cpp for reproducible builds and bake a quantized multilingual
-# Whisper Small Q5_1 model into the image. It fits this service's 1 GB RAM limit
-# while avoiding any external speech API key.
-ARG WHISPER_CPP_REF=v1.9.4
-RUN git clone --depth 1 --branch ${WHISPER_CPP_REF} https://github.com/ggml-org/whisper.cpp.git /tmp/whisper.cpp && \
-    cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DBUILD_SHARED_LIBS=OFF \
-      -DWHISPER_BUILD_TESTS=OFF \
-      -DWHISPER_BUILD_EXAMPLES=ON && \
-    cmake --build /tmp/whisper.cpp/build --config Release -j2 --target whisper-cli && \
-    install -m 0755 /tmp/whisper.cpp/build/bin/whisper-cli /usr/local/bin/whisper-cli && \
-    mkdir -p /opt/whisper-models && \
-    curl -fL --retry 3 --retry-delay 2 \
-      -o /opt/whisper-models/ggml-small-q5_1.bin \
-      https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin && \
-    echo "6fe57ddcfdd1c6b07cdcc73aaf620810ce5fc771  /opt/whisper-models/ggml-small-q5_1.bin" | sha1sum -c - && \
-    curl -fL --retry 3 --retry-delay 2 \
-      -o /opt/whisper-models/ggml-base-q5_1.bin \
-      https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin && \
-    echo "a3733eda680ef76256db5fc5dd9de8629e62c5e7  /opt/whisper-models/ggml-base-q5_1.bin" | sha1sum -c - && \
-    rm -rf /tmp/whisper.cpp
+# Hermes v2026.9.11 uses faster-whisper directly. Bake the multilingual Base
+# CTranslate2 model into the immutable image so runtime transcription needs no
+# model download, no cloud STT key, and no persistent-volume cache. This also
+# avoids carrying a second whisper.cpp engine + two duplicate GGML models.
+RUN mkdir -p /opt/faster-whisper-models/base && \
+    python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='Systran/faster-whisper-base', local_dir='/opt/faster-whisper-models/base')" && \
+    rm -rf /opt/faster-whisper-models/base/.cache
 
 # firecrawl-anydoc (the PDF / legacy-Office reader behind read_file) is a CORE
 # dependency as of v2026.8.31 — pyproject.toml pins ==0.2.4 and exempts it from
@@ -206,8 +191,7 @@ COPY start.sh /app/start.sh
 COPY telegram_capture.py /app/telegram_capture.py
 COPY scripts/hermes-drive-archive.py /app/scripts/hermes-drive-archive.py
 COPY scripts/bootstrap-hermes-team.py /app/scripts/bootstrap-hermes-team.py
-COPY scripts/hermes-whisper-stt.sh /usr/local/bin/hermes-whisper-stt
-RUN chmod +x /app/start.sh /app/scripts/hermes-drive-archive.py /usr/local/bin/hermes-whisper-stt && \
+RUN chmod +x /app/start.sh /app/scripts/hermes-drive-archive.py && \
     python -m py_compile /app/server.py /app/scripts/hermes-drive-archive.py /app/scripts/bootstrap-hermes-team.py /app/scripts/patch-hermes-telegram-voice.py \
       /app/personalization/scripts/final_certify.py \
       /opt/hermes-agent/plugins/platforms/telegram/adapter.py && \
@@ -216,9 +200,8 @@ RUN chmod +x /app/start.sh /app/scripts/hermes-drive-archive.py /usr/local/bin/h
     grep -Fq 'attempts = 3 if kind == "voice" else 1' /opt/hermes-agent/plugins/platforms/telegram/adapter.py && \
     python -c 'import faster_whisper; from faster_whisper import WhisperModel' && \
     /opt/hierarchy-venv/bin/python -c 'from core.registry.profile_registry import ProfileRegistry; from core.ipc.message_bus import MessageBus' && \
-    test -s /opt/whisper-models/ggml-small-q5_1.bin && \
-    test -s /opt/whisper-models/ggml-base-q5_1.bin && \
-    sh -n /usr/local/bin/hermes-whisper-stt
+    test -s /opt/faster-whisper-models/base/model.bin && \
+    test -s /opt/faster-whisper-models/base/config.json
 
 ENV HOME=/data
 ENV HERMES_HOME=/data/.hermes
