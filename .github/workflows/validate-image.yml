@@ -44,6 +44,7 @@ jobs:
           docker run --rm --entrypoint sh hermes-agent:ci -lc '
             set -eu
             python -c "import faster_whisper; from faster_whisper import WhisperModel"
+            python -c "from faster_whisper import WhisperModel; WhisperModel('/opt/faster-whisper-models/base', device='cpu', compute_type='int8'); print('LOCAL_MODEL_LOAD_OK')"
             test -s /opt/faster-whisper-models/base/model.bin
             test -s /opt/faster-whisper-models/base/config.json
             /opt/hierarchy-venv/bin/python -c "from core.registry.profile_registry import ProfileRegistry; from core.ipc.message_bus import MessageBus"
@@ -51,4 +52,5 @@ jobs:
             bash -n /app/start.sh
             grep -Fq "unload_after_idle_seconds" /app/start.sh
             grep -Fq "/opt/faster-whisper-models/base" /app/start.sh
+            grep -Fq "coordinator-ingress/internal-specialists" /app/scripts/bootstrap-hermes-team.py
           '
