@@ -32,12 +32,15 @@ python -m py_compile "$VOICE_ADAPTER"
 grep -Fq '[Telegram] Pre-transcribed user voice' "$VOICE_ADAPTER"
 grep -Fq 'attempts = 3 if kind == "voice" else 1' "$VOICE_ADAPTER"
 command -v ffmpeg >/dev/null
+python -c 'import faster_whisper; from faster_whisper import WhisperModel'
+# Retain the already-baked whisper.cpp binaries as an emergency local fallback,
+# but Hermes' configured provider below is faster-whisper.
 command -v whisper-cli >/dev/null
 test -x /usr/local/bin/hermes-whisper-stt
 test -s /opt/whisper-models/ggml-small-q5_1.bin
 test -s /opt/whisper-models/ggml-base-q5_1.bin
 touch "$VOICE_READY"
-echo "[voice-preflight] READY telegram_patch=on stt=whisper.cpp primary=small-q5_1 fallback=base-q5_1"
+echo "[voice-preflight] READY telegram_patch=on stt=faster-whisper model=base cpu=int8 fallback=whisper.cpp"
 
 # Stamp the install method as "docker" so hermes treats this as an immutable
 # container image, not a pip checkout. hermes's detect_install_method() reads
@@ -243,8 +246,8 @@ data["fallback_providers"] = fallbacks
 # Media pipeline:
 # - Gemma 4 Cloud handles image analysis for every chat model, so switching to
 #   text-only Groq/DeepSeek does not break Telegram photo understanding.
-# - Telegram voice notes use a fully local/open-source whisper.cpp command
-#   provider. No Groq/OpenAI speech API key is required.
+# - Telegram voice notes use Hermes' native local faster-whisper provider.
+#   v2026.9.11 reads the model from stt.local.model (not legacy stt.model).
 if ollama_ready:
     auxiliary = data.get("auxiliary")
     if not isinstance(auxiliary, dict):
@@ -262,20 +265,19 @@ if not isinstance(stt, dict):
     stt = {}
 stt["enabled"] = True
 stt["echo_transcripts"] = True
-stt["provider"] = "whispercpp"
-# The wrapper forces Whisper language auto-detection so Arabic, English, and
-# mixed voice notes do not depend on a cloud language hint.
+stt["provider"] = "local"
+# Blank language lets faster-whisper auto-detect Arabic, English, and mixed notes.
 stt["language"] = ""
-stt_providers = stt.get("providers")
-if not isinstance(stt_providers, dict):
-    stt_providers = {}
-stt_providers["whispercpp"] = {
-    "type": "command",
-    "command": "/usr/local/bin/hermes-whisper-stt {input_path} {output_path}",
-    "format": "txt",
-    "timeout": 300,
-}
-stt["providers"] = stt_providers
+local_stt = stt.get("local")
+if not isinstance(local_stt, dict):
+    local_stt = {}
+local_stt["model"] = "base"
+local_stt["device"] = "cpu"
+local_stt["compute_type"] = "int8"
+# Release model memory when idle on the 1 GB Railway service. It reloads
+# transparently on the next voice note.
+local_stt["unload_after_idle_seconds"] = 300
+stt["local"] = local_stt
 data["stt"] = stt
 
 model = data.get("model")
@@ -323,7 +325,7 @@ print(
     f"main={main} aliases={','.join(sorted(aliases)) or 'none'} "
     f"fallbacks={len(fallbacks)} "
     f"vision={'gemma4:31b-cloud' if ollama_ready else 'default'} "
-    f"stt=local/whisper.cpp-small-q5_1",
+    f"stt=local/faster-whisper-base-cpu-int8",
     flush=True,
 )
 PY
@@ -895,6 +897,13 @@ echo "[drive-archive] worker started (6h cadence)"
 # ---- END HASAN PERSONAL HERMES BOOTSTRAP v2 ----
 
 
+# Isolated hierarchical-agents coordination layer.
+export HIERARCHY_PROJECT_ROOT=/opt/vendor/hierarchical-agents
+export HIERARCHY_PYTHON=/opt/hierarchy-venv/bin/python
+export HERMES_DB_BASE_DIR=/data/.hermes/hierarchy
+export HERMES_PROFILES_DIR=/data/.hermes/profiles
+mkdir -p "$HERMES_DB_BASE_DIR"
+
 # Native persistent multi-agent team.
 # The default profile remains the Coordinator. Specialist profiles are cloned
 # without messaging credentials, then receive only their own optional Telegram
@@ -903,14 +912,24 @@ if ! python /app/scripts/bootstrap-hermes-team.py configure; then
   echo "[team] bootstrap incomplete; keeping Coordinator online and retrying next deploy" >&2
 fi
 
+# Sync the same persistent profiles into the pinned hierarchy registry. This
+# provides the org chart + IPC/shared state; actual agent execution stays on
+# Hermes' native Bot Mode because the third-party gateway's task executor is
+# incomplete in the pinned upstream implementation.
+if ! python /app/scripts/bootstrap-hermes-team.py sync-hierarchy; then
+  echo "[hierarchy] sync incomplete; native Hermes team remains available" >&2
+fi
+
 # Canonical Bot Chats unlock Hermes' built-in teammate roster/message_agent.
 # Initialize them after the server/gateway has had time to start. This is
 # idempotent and never blocks Railway health or Coordinator availability.
 (
   sleep 20
   python /app/scripts/bootstrap-hermes-team.py init-chats || true
+  sleep 5
+  python /app/scripts/bootstrap-hermes-team.py smoke-test || true
 ) &
-echo "[team] Bot Chat initializer scheduled" >&2
+echo "[team] Bot Chat initializer + native delegation smoke test scheduled" >&2
 
 # Final certification / ongoing lightweight boot verification.
 # Runs in the background so health checks and Telegram startup are never blocked.

@@ -276,7 +276,7 @@ def configure() -> int:
         "multiplex_profiles": True,
         "coordinator": "default",
         "profiles": {},
-        "local_stt": "whisper.cpp",
+        "local_stt": "faster-whisper/base",
     }
 
     for name, spec in TEAM.items():
@@ -342,13 +342,191 @@ def init_bot_chats() -> int:
     return 0 if not failures else 1
 
 
+def sync_hierarchy() -> int:
+    """Sync Hermes profiles into the pinned hierarchical-agents registry.
+
+    The third-party package is isolated in its own venv. We use it for durable
+    org-chart and IPC state only; native Hermes Bot Mode remains the execution
+    path because the upstream hierarchy gateway does not wire a WorkerBridge.
+    """
+    project_root = Path(os.getenv("HIERARCHY_PROJECT_ROOT", "/opt/vendor/hierarchical-agents"))
+    hierarchy_python = os.getenv("HIERARCHY_PYTHON", "/opt/hierarchy-venv/bin/python")
+    db_dir = Path(os.getenv("HERMES_DB_BASE_DIR", str(ROOT / "hierarchy")))
+    script = project_root / "scripts" / "sync_hermes_profiles.py"
+    if not script.is_file():
+        print(f"[hierarchy] sync script missing at {script}", flush=True)
+        return 1
+
+    env = dict(os.environ)
+    env.update({
+        "HOME": "/data",
+        "HERMES_HOME": str(ROOT),
+        "HIERARCHY_PROJECT_ROOT": str(project_root),
+        "HERMES_DB_BASE_DIR": str(db_dir),
+        "HERMES_PROFILES_DIR": str(PROFILES),
+        "PYTHONPATH": str(project_root),
+    })
+    result = subprocess.run(
+        [hierarchy_python, str(script), "--show-chart"],
+        cwd=str(project_root),
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=90,
+        check=False,
+    )
+    if result.returncode != 0:
+        tail = " | ".join((result.stdout or "").splitlines()[-10:])
+        print(f"[hierarchy] sync failed rc={result.returncode} detail={tail[:1200]}", flush=True)
+        return 1
+
+    # The hierarchy library intentionally onboards new non-CEO entries by
+    # default. For these already-configured Hermes profiles, activate them and
+    # preserve the flat hub-and-spoke reporting line to its auto-created CEO.
+    code = """
+import json, os, sys
+from pathlib import Path
+root = Path(os.environ["HIERARCHY_PROJECT_ROOT"])
+sys.path.insert(0, str(root))
+from core.registry.profile_registry import ProfileRegistry
+from core.ipc.message_bus import MessageBus
+from core.ipc.models import MessagePriority, MessageType
+from core.registry.org_chart import render_org_chart
+
+db = Path(os.environ["HERMES_DB_BASE_DIR"])
+registry = ProfileRegistry(str(db / "registry.db"))
+specs = {
+    "marketing": ("Marketing", "Campaigns, content strategy, SEO, social media, positioning, and growth research."),
+    "auditor": ("Auditor", "Independent verification, process review, compliance checks, risk identification, and evidence-based QA."),
+    "cfo": ("CFO", "Budgeting, forecasting, unit economics, cost analysis, financial models, and commercial tradeoffs."),
+}
+for name, (title, desc) in specs.items():
+    p = registry.get_profile(name)
+    registry.update_profile(name, display_name=title, description=desc, status="active")
+
+class Adapter:
+    def __init__(self, r): self.r = r
+    def get(self, name): return self.r.get_profile(name)
+
+# Real write/read/ack smoke test of the SQLite IPC bus.
+bus = MessageBus(str(db / "ipc.db"), profile_registry=Adapter(registry))
+mid = bus.send(
+    from_profile="hermes",
+    to_profile="marketing",
+    message_type=MessageType.TASK_REQUEST,
+    payload={"task": "HIERARCHY_IPC_SMOKE_TEST"},
+    priority=MessagePriority.NORMAL,
+)
+seen = any(m.message_id == mid for m in bus.poll("marketing", limit=50))
+if seen:
+    bus.acknowledge(mid)
+bus.close()
+print("[hierarchy] IPC_SMOKE=" + ("PASS" if seen else "FAIL"))
+print("[hierarchy] ORG_CHART_BEGIN")
+print(render_org_chart(registry))
+print("[hierarchy] ORG_CHART_END")
+registry.close()
+if not seen:
+    raise SystemExit(2)
+"""
+    verify = subprocess.run(
+        [hierarchy_python, "-c", code],
+        cwd=str(project_root),
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=60,
+        check=False,
+    )
+    print((verify.stdout or "").strip(), flush=True)
+    ok = verify.returncode == 0 and "IPC_SMOKE=PASS" in (verify.stdout or "")
+
+    try:
+        status = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        status = {}
+    status["hierarchy"] = {
+        "installed": True,
+        "source_ref": "de37f8a46458fc76cc57094cde4f404bd9bda309",
+        "profiles_synced": list(TEAM),
+        "ipc_smoke": bool(ok),
+        "execution_path": "native-hermes-bot-mode",
+    }
+    STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    STATUS_PATH.write_text(json.dumps(status, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"[hierarchy] installed=True profiles_synced=3 ipc_smoke={'PASS' if ok else 'FAIL'}", flush=True)
+    return 0 if ok else 1
+
+
+def native_delegation_smoke() -> int:
+    """One-time Coordinator -> Marketing Bot Mode handoff test."""
+    marker = ROOT / "team" / ".native_delegation_smoke_v1"
+    if marker.exists():
+        print("[team-smoke] already passed", flush=True)
+        return 0
+
+    send_prompt = (
+        "Deployment smoke test. Use message_agent to send exactly one message to @marketing. "
+        "Your composed message must ask Marketing to reply to you with exactly MARKETING_OK. "
+        "Do not use delegate_task and do not claim success unless message_agent acknowledges the send. "
+        "After sending, reply exactly TEAM_SMOKE_SENT."
+    )
+    first = run([
+        "hermes", "-p", "default", "chat", "--in", "/data", "-c", "Bot Chat",
+        "--create-if-missing", "-Q", "-q", send_prompt,
+    ], timeout=240)
+    first_text = first.stdout or ""
+    if first.returncode != 0 or "TEAM_SMOKE_SENT" not in first_text:
+        print(f"[team-smoke] coordinator send failed rc={first.returncode}", flush=True)
+        return 1
+
+    # message_agent is fire-and-forget. Give the Marketing Bot Chat time to
+    # complete and send its attributed reply into the Coordinator Bot Chat.
+    import time
+    for attempt in range(3):
+        time.sleep(20 if attempt == 0 else 15)
+        check_prompt = (
+            "Verify the deployment smoke test from the actual Bot Chat history. "
+            "Only if you can see an attributed teammate message from @marketing containing MARKETING_OK, "
+            "reply exactly TEAM_SMOKE_OK. Otherwise reply exactly TEAM_SMOKE_PENDING. Do not infer or fabricate."
+        )
+        check = run([
+            "hermes", "-p", "default", "chat", "--in", "/data", "-c", "Bot Chat",
+            "--create-if-missing", "-Q", "-q", check_prompt,
+        ], timeout=240)
+        text_out = check.stdout or ""
+        if check.returncode == 0 and "TEAM_SMOKE_OK" in text_out:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text("pass\n", encoding="utf-8")
+            try:
+                status = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
+            except Exception:
+                status = {}
+            status["native_delegation_smoke"] = {
+                "coordinator_to_marketing": True,
+                "verified_reply": "MARKETING_OK",
+            }
+            STATUS_PATH.write_text(json.dumps(status, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            print("[team-smoke] PASS coordinator->marketing->coordinator", flush=True)
+            return 0
+
+    print("[team-smoke] PENDING no verified Marketing reply observed", flush=True)
+    return 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("configure", "init-chats"))
+    parser.add_argument("mode", choices=("configure", "sync-hierarchy", "init-chats", "smoke-test"))
     args = parser.parse_args()
     if args.mode == "configure":
         return configure()
-    return init_bot_chats()
+    if args.mode == "sync-hierarchy":
+        return sync_hierarchy()
+    if args.mode == "init-chats":
+        return init_bot_chats()
+    return native_delegation_smoke()
 
 
 if __name__ == "__main__":

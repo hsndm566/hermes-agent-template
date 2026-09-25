@@ -76,7 +76,7 @@ COPY scripts/patch-hermes-telegram-voice.py /app/scripts/patch-hermes-telegram-v
 RUN git clone --depth 1 --branch ${HERMES_REF} https://github.com/NousResearch/hermes-agent.git /opt/hermes-agent && \
     python /tmp/patch-hermes-telegram-voice.py && \
     cd /opt/hermes-agent && \
-    uv pip install --system --no-cache -e ".[all,messaging,tts-premium,honcho,bedrock,anthropic,edge-tts,hindsight,vision]" && \
+    uv pip install --system --no-cache -e ".[all,messaging,tts-premium,honcho,bedrock,anthropic,edge-tts,hindsight,vision,stt-whisper]" && \
     cd /opt/hermes-agent/web && \
     npm install --silent && \
     npm run build && \
@@ -156,8 +156,14 @@ RUN git clone --depth 1 --branch ${WHISPER_CPP_REF} https://github.com/ggml-org/
 
 # Pin the curated third-party skill sources into the image. Runtime skill-hub
 # fetches can be slow/flaky on Railway; build-time Git fetches are deterministic.
+# Hierarchical-agents main currently omits scripts referenced by its own README.
+# Pin the last verified commit containing sync_hermes_profiles.py and
+# hierarchy_gateway.py. Install it into a separate venv so its generic top-level
+# "core" / "integrations" packages cannot shadow Hermes modules.
+ARG HIERARCHICAL_AGENTS_REF=de37f8a46458fc76cc57094cde4f404bd9bda309
+
 RUN set -eux; \
-    mkdir -p /opt/vendor/superpowers /opt/vendor/gstack /opt/vendor/planning-with-files /opt/vendor/hermeshub; \
+    mkdir -p /opt/vendor/superpowers /opt/vendor/gstack /opt/vendor/planning-with-files /opt/vendor/hermeshub /opt/vendor/hierarchical-agents; \
     git -C /opt/vendor/superpowers init; \
     git -C /opt/vendor/superpowers fetch --depth 1 https://github.com/obra/superpowers.git b36e0829c6d0140e93cfef2ca599b1b07d4a7797; \
     git -C /opt/vendor/superpowers checkout FETCH_HEAD; \
@@ -170,7 +176,19 @@ RUN set -eux; \
     git -C /opt/vendor/hermeshub init; \
     git -C /opt/vendor/hermeshub fetch --depth 1 https://github.com/amanning3390/hermeshub.git 7bd1fb508799cc536c767caf99edbc3e3d97ebd3; \
     git -C /opt/vendor/hermeshub checkout FETCH_HEAD; \
-    rm -rf /opt/vendor/superpowers/.git /opt/vendor/gstack/.git /opt/vendor/planning-with-files/.git /opt/vendor/hermeshub/.git
+    git -C /opt/vendor/hierarchical-agents init; \
+    git -C /opt/vendor/hierarchical-agents fetch --depth 1 https://github.com/GieshBuilds/hierarchical-agents.git ${HIERARCHICAL_AGENTS_REF}; \
+    git -C /opt/vendor/hierarchical-agents checkout FETCH_HEAD; \
+    test -f /opt/vendor/hierarchical-agents/scripts/sync_hermes_profiles.py; \
+    test -f /opt/vendor/hierarchical-agents/scripts/hierarchy_gateway.py; \
+    rm -rf /opt/vendor/superpowers/.git /opt/vendor/gstack/.git /opt/vendor/planning-with-files/.git /opt/vendor/hermeshub/.git /opt/vendor/hierarchical-agents/.git
+
+RUN uv venv /opt/hierarchy-venv && \
+    uv pip install --python /opt/hierarchy-venv/bin/python --no-cache -e /opt/vendor/hierarchical-agents && \
+    /opt/hierarchy-venv/bin/python -m py_compile \
+      /opt/vendor/hierarchical-agents/scripts/sync_hermes_profiles.py \
+      /opt/vendor/hierarchical-agents/scripts/hierarchy_gateway.py \
+      /opt/vendor/hierarchical-agents/tools/hierarchy_tools.py
 
 COPY requirements.txt /app/requirements.txt
 RUN uv pip install --system --no-cache -r /app/requirements.txt
@@ -192,6 +210,8 @@ RUN chmod +x /app/start.sh /app/scripts/hermes-drive-archive.py /usr/local/bin/h
     bash -n /app/start.sh && \
     grep -Fq '[Telegram] Pre-transcribed user voice' /opt/hermes-agent/plugins/platforms/telegram/adapter.py && \
     grep -Fq 'attempts = 3 if kind == "voice" else 1' /opt/hermes-agent/plugins/platforms/telegram/adapter.py && \
+    python -c 'import faster_whisper; from faster_whisper import WhisperModel' && \
+    /opt/hierarchy-venv/bin/python -c 'from core.registry.profile_registry import ProfileRegistry; from core.ipc.message_bus import MessageBus' && \
     test -s /opt/whisper-models/ggml-small-q5_1.bin && \
     test -s /opt/whisper-models/ggml-base-q5_1.bin && \
     sh -n /usr/local/bin/hermes-whisper-stt
