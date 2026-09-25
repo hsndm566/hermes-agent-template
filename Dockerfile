@@ -181,6 +181,10 @@ RUN set -eux; \
     git -C /opt/vendor/hierarchical-agents checkout FETCH_HEAD; \
     test -f /opt/vendor/hierarchical-agents/scripts/sync_hermes_profiles.py; \
     test -f /opt/vendor/hierarchical-agents/scripts/hierarchy_gateway.py; \
+    # Upstream's pinned commit declares a nonexistent setuptools backend. \
+    # Use setuptools' standard PEP 517 backend without changing package code. \
+    sed -i 's#setuptools.backends._legacy:_Backend#setuptools.build_meta#' /opt/vendor/hierarchical-agents/pyproject.toml; \
+    grep -Fq 'build-backend = "setuptools.build_meta"' /opt/vendor/hierarchical-agents/pyproject.toml; \
     rm -rf /opt/vendor/superpowers/.git /opt/vendor/gstack/.git /opt/vendor/planning-with-files/.git /opt/vendor/hermeshub/.git /opt/vendor/hierarchical-agents/.git
 
 RUN uv venv /opt/hierarchy-venv && \
