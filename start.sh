@@ -895,6 +895,23 @@ echo "[drive-archive] worker started (6h cadence)"
 # ---- END HASAN PERSONAL HERMES BOOTSTRAP v2 ----
 
 
+# Native persistent multi-agent team.
+# The default profile remains the Coordinator. Specialist profiles are cloned
+# without messaging credentials, then receive only their own optional Telegram
+# token. Hermes' default gateway multiplexes the profiles in one Railway process.
+if ! python /app/scripts/bootstrap-hermes-team.py configure; then
+  echo "[team] bootstrap incomplete; keeping Coordinator online and retrying next deploy" >&2
+fi
+
+# Canonical Bot Chats unlock Hermes' built-in teammate roster/message_agent.
+# Initialize them after the server/gateway has had time to start. This is
+# idempotent and never blocks Railway health or Coordinator availability.
+(
+  sleep 20
+  python /app/scripts/bootstrap-hermes-team.py init-chats || true
+) &
+echo "[team] Bot Chat initializer scheduled" >&2
+
 # Final certification / ongoing lightweight boot verification.
 # Runs in the background so health checks and Telegram startup are never blocked.
 # First boot performs full agent + learning + backup + Telegram tests.
