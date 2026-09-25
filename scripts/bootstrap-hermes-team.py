@@ -309,7 +309,7 @@ def configure() -> int:
         "multiplex_profiles": True,
         "coordinator": "default",
         "profiles": {},
-        "local_stt": "faster-whisper/base",
+        "local_stt": "faster-whisper/base-baked-cpu-int8",
     }
 
     for name, spec in TEAM.items():
