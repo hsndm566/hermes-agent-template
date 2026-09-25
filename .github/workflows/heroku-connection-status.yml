@@ -1,0 +1,21 @@
+name: Heroku Connection Status
+on:
+  push:
+    branches: [audit/heroku-secret-status-20260925]
+    paths: [.github/workflows/heroku-connection-status.yml]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Heroku credential presence
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+        shell: bash
+        run: |
+          if [ -n "${HEROKU_API_KEY:-}" ]; then
+            echo "HEROKU_KEY_PRESENT=true"
+          else
+            echo "HEROKU_KEY_PRESENT=false"
+          fi
