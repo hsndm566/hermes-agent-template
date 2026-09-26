@@ -309,7 +309,7 @@ elif groq_ready:
     data["model"] = model
     write_env_value(env_path, "LLM_MODEL", "openai/gpt-oss-120b")
 elif openai_ready and os.getenv("LLM_MODEL", "").strip():
-    model["provider"] = "openai"
+    model["provider"] = "auto"
     model["default"] = os.getenv("LLM_MODEL", "").strip()
     for stale in ("base_url", "api_key", "api", "api_mode"):
         model.pop(stale, None)
