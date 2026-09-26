@@ -920,6 +920,19 @@ export HERMES_DB_BASE_DIR=/data/.hermes/hierarchy
 export HERMES_PROFILES_DIR=/data/.hermes/profiles
 mkdir -p "$HERMES_DB_BASE_DIR"
 
+# Create/reuse the five private Telegram DM topics and export the exact
+# chat_id/thread_id profile mapping before Hermes loads gateway.profile_routes.
+# This is idempotent and never prints the Telegram bot token.
+if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+  if HERMES_TELEGRAM_PROFILE_ROUTES_JSON="$(python /app/scripts/configure-telegram-topics.py)"; then
+    export HERMES_TELEGRAM_PROFILE_ROUTES_JSON
+    sync_runtime_env_var HERMES_TELEGRAM_PROFILE_ROUTES_JSON
+    echo "[telegram-routes] exported HERMES_TELEGRAM_PROFILE_ROUTES_JSON from real Telegram topic IDs" >&2
+  else
+    echo "[telegram-routes] setup deferred; existing Hermes service will continue without guessed routes" >&2
+  fi
+fi
+
 # Native persistent multi-agent team.
 # The default profile remains the Coordinator. Specialist profiles are cloned
 # without messaging credentials, then receive only their own optional Telegram

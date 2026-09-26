@@ -1194,7 +1194,7 @@ COOKIE_MAX_AGE = 7 * 86400  # 7 days
 COOKIE_SECRET = secrets.token_bytes(32)
 
 # Public paths — no auth required. Everything else is behind the cookie gate.
-PUBLIC_PATHS = {"/health", "/setup/login", "/logout"}
+PUBLIC_PATHS = {"/health", "/telegram-route-audit", "/setup/login", "/logout"}
 
 
 def _make_auth_token() -> str:
@@ -1922,6 +1922,37 @@ async def route_health(request: Request):
         },
         status_code=200 if healthy else 503,
     )
+
+
+TELEGRAM_ROUTE_AUDIT_SHA256 = "4d1cf9807f15a8aa6b1b9a7dd1eea495462a38b8c430fb839df478dd3a134ef5"
+
+
+async def telegram_route_audit(request: Request):
+    """Temporary acceptance endpoint: returns only chat/topic/profile IDs, never credentials."""
+    supplied = request.query_params.get("key", "")
+    supplied_hash = _hashlib.sha256(supplied.encode("utf-8")).hexdigest()
+    if not supplied or not _hmac.compare_digest(supplied_hash, TELEGRAM_ROUTE_AUDIT_SHA256):
+        return JSONResponse({"error": "Not found"}, status_code=404)
+
+    path = Path("/data/.hermes/telegram_profile_routes.json")
+    if not path.exists():
+        return JSONResponse({"ready": False, "reason": "mapping_not_created"}, status_code=503)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        chat_id = str(raw.get("chat_id") or "")
+        topics = raw.get("topics") if isinstance(raw.get("topics"), dict) else {}
+        clean = []
+        for name in ("Main", "Marketing", "Auditor", "CFO", "Domain"):
+            item = topics.get(name) if isinstance(topics.get(name), dict) else {}
+            clean.append({
+                "name": name,
+                "profile": str(item.get("profile") or ""),
+                "thread_id": str(item.get("thread_id") or ""),
+            })
+        ready = bool(chat_id) and all(x["profile"] and x["thread_id"] for x in clean)
+        return JSONResponse({"ready": ready, "chat_id": chat_id, "topics": clean})
+    except Exception:
+        return JSONResponse({"ready": False, "reason": "mapping_unreadable"}, status_code=503)
 
 
 async def api_config_get(request: Request):
@@ -3260,6 +3291,7 @@ ANY_METHOD = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
 routes = [
     # Public — no auth required.
     Route("/health",                            route_health),
+    Route("/telegram-route-audit",              telegram_route_audit),
     # Our sign-in lives under /setup/* so the bare /login path stays free.
     # hermes' own gated dashboard redirects unauthenticated requests there, and
     # a route of ours at /login would answer instead — the browser would bounce
