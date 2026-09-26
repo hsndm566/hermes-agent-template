@@ -1937,8 +1937,22 @@ async def telegram_route_audit(request: Request):
     retry_result = None
     if request.query_params.get("retry") == "1":
         try:
+            helper_path = Path("/app/scripts/configure-telegram-topics.py")
+            if not helper_path.exists():
+                helper_path = Path("/tmp/configure-telegram-topics.py")
+                helper_url = (
+                    "https://raw.githubusercontent.com/hsndm566/hermes-agent-template/"
+                    "d30280d9452e2d249acd3d79ba0c08541e1373b9/"
+                    "scripts/configure-telegram-topics.py"
+                )
+                async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+                    helper_resp = await client.get(helper_url)
+                    helper_resp.raise_for_status()
+                helper_path.write_text(helper_resp.text, encoding="utf-8")
+                os.chmod(helper_path, 0o700)
+
             proc = await asyncio.create_subprocess_exec(
-                "python", "/app/scripts/configure-telegram-topics.py",
+                "python", str(helper_path),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

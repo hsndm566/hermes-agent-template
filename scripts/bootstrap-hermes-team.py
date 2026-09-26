@@ -29,15 +29,43 @@ HONCHO_OWNER_PEER = os.getenv("HERMES_HONCHO_OWNER_PEER", "hasan").strip() or "h
 
 
 def topic_routes_from_env() -> list[dict]:
-    """Return only explicit, valid Telegram routes; IDs must come from Telegram."""
+    """Return only explicit, valid Telegram routes; IDs must come from Telegram.
+
+    The deployment env is preferred. After first-time topic creation, the
+    persistent route-state file is the restart-safe fallback so boot never
+    depends on making Telegram API calls.
+    """
     raw = os.getenv("HERMES_TELEGRAM_PROFILE_ROUTES_JSON", "").strip()
-    if not raw:
-        return []
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        print(f"[team] invalid HERMES_TELEGRAM_PROFILE_ROUTES_JSON: {exc.msg}", flush=True)
-        return []
+    if raw:
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            print(f"[team] invalid HERMES_TELEGRAM_PROFILE_ROUTES_JSON: {exc.msg}", flush=True)
+            return []
+    else:
+        route_state = ROOT / "telegram_profile_routes.json"
+        try:
+            state = json.loads(route_state.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        chat_id = str(state.get("chat_id") or "").strip() if isinstance(state, dict) else ""
+        topics = state.get("topics") if isinstance(state, dict) else {}
+        if not chat_id or not isinstance(topics, dict):
+            return []
+        value = []
+        for topic_name, item in topics.items():
+            if not isinstance(item, dict):
+                continue
+            profile = str(item.get("profile") or "").strip()
+            thread_id = str(item.get("thread_id") or "").strip()
+            if profile and thread_id:
+                value.append({
+                    "name": f"telegram-{profile}",
+                    "chat_id": chat_id,
+                    "thread_id": thread_id,
+                    "profile": profile,
+                    "enabled": True,
+                })
     if not isinstance(value, list):
         print("[team] HERMES_TELEGRAM_PROFILE_ROUTES_JSON must be a JSON list", flush=True)
         return []
