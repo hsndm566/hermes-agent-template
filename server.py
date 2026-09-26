@@ -244,6 +244,7 @@ else:
 # (key, label, category, is_secret)
 ENV_VARS = [
     ("LLM_MODEL",               "Model",                    "model",     False),
+    ("OPENAI_API_KEY",            "OpenAI",                   "provider",  True),
     ("OPENROUTER_API_KEY",       "OpenRouter",               "provider",  True),
     ("DEEPSEEK_API_KEY",         "DeepSeek",                 "provider",  True),
     ("GROQ_API_KEY",             "Groq",                     "provider",  True),
