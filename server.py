@@ -1936,14 +1936,14 @@ async def telegram_route_audit(request: Request):
 
     retry_result = None
     if request.query_params.get("retry") == "1":
+        gateway_paused_for_owner_recovery = False
         try:
             helper_path = Path("/app/scripts/configure-telegram-topics.py")
             if not helper_path.exists():
                 helper_path = Path("/tmp/configure-telegram-topics.py")
                 helper_url = (
                     "https://raw.githubusercontent.com/hsndm566/hermes-agent-template/"
-                    "d30280d9452e2d249acd3d79ba0c08541e1373b9/"
-                    "scripts/configure-telegram-topics.py"
+                    "main/scripts/configure-telegram-topics.py"
                 )
                 async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
                     helper_resp = await client.get(helper_url)
@@ -1951,10 +1951,21 @@ async def telegram_route_audit(request: Request):
                 helper_path.write_text(helper_resp.text, encoding="utf-8")
                 os.chmod(helper_path, 0o700)
 
+            helper_env = os.environ.copy()
+            if request.query_params.get("recover_owner") == "1":
+                # The helper's Bot API getUpdates fallback is only safe while
+                # Hermes' long poller is stopped. Stop the managed gateway,
+                # inspect without an offset (so no update is acknowledged),
+                # then bring the exact same gateway back.
+                await gw.stop()
+                gateway_paused_for_owner_recovery = True
+                helper_env["HERMES_TOPIC_BOOTSTRAP_ALLOW_GET_UPDATES"] = "true"
+
             proc = await asyncio.create_subprocess_exec(
                 "python", str(helper_path),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=helper_env,
             )
             stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=90)
             stderr = stderr_b.decode("utf-8", errors="replace")
@@ -1964,12 +1975,19 @@ async def telegram_route_audit(request: Request):
                 "rc": proc.returncode,
                 "detail": "\n".join(stderr.splitlines()[-8:])[-1600:],
             }
-            if proc.returncode == 0:
+            if proc.returncode == 0 and not gateway_paused_for_owner_recovery:
                 asyncio.create_task(gw.restart())
         except asyncio.TimeoutError:
             retry_result = {"rc": 124, "detail": "topic setup timed out"}
         except Exception as exc:
             retry_result = {"rc": 125, "detail": f"{type(exc).__name__}"}
+        finally:
+            if gateway_paused_for_owner_recovery:
+                try:
+                    await gw.start()
+                except Exception as exc:
+                    if retry_result is None:
+                        retry_result = {"rc": 126, "detail": f"gateway restart failed: {type(exc).__name__}"}
 
     status_path = Path("/data/.hermes/telegram_topic_setup_status.json")
     try:
