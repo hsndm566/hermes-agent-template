@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import sys
 import urllib.error
 import urllib.parse
@@ -137,11 +138,56 @@ def resolve_chat_id() -> str:
             log(f"resolved owner chat_id from Hermes approved pairing state ({approved_path.parent.name})")
             return unique[0]
 
-    allowed = os.getenv("TELEGRAM_ALLOWED_USERS", "").strip()
-    ids = [part for part in re.split(r"[\\s,;]+", allowed) if part]
+    allowed_values = [os.getenv("TELEGRAM_ALLOWED_USERS", "").strip()]
+    try:
+        for raw in ENV_FILE.read_text(encoding="utf-8").splitlines():
+            if raw.startswith("TELEGRAM_ALLOWED_USERS="):
+                allowed_values.append(raw.split("=", 1)[1].strip().strip('"').strip("'"))
+    except OSError:
+        pass
+    ids: list[str] = []
+    for allowed in allowed_values:
+        ids.extend(part for part in re.split(r"[\\s,;]+", allowed) if part)
     ids = [part for part in ids if part.isdigit() and int(part) > 0]
-    if len(ids) == 1:
-        return ids[0]
+    unique_allowed = sorted(set(ids))
+    if len(unique_allowed) == 1:
+        log("resolved owner chat_id from TELEGRAM_ALLOWED_USERS")
+        return unique_allowed[0]
+
+    # Last local-only fallback: recover a single Telegram DM owner from Hermes'
+    # persistent session DB. This reads state only; it does not call Telegram.
+    db_path = HOME / "state.db"
+    if db_path.exists():
+        candidates: set[str] = set()
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
+            try:
+                cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+                wanted = [name for name in ("chat_id", "user_id", "session_key", "source") if name in cols]
+                if wanted:
+                    rows = conn.execute(f"SELECT {','.join(wanted)} FROM sessions").fetchall()
+                    for row in rows:
+                        item = dict(zip(wanted, row))
+                        source = str(item.get("source") or "")
+                        skey = str(item.get("session_key") or "")
+                        if source != "telegram" and ":telegram:" not in skey:
+                            continue
+                        for key in ("chat_id", "user_id"):
+                            value = str(item.get(key) or "").strip()
+                            if value.isdigit() and int(value) > 0:
+                                candidates.add(value)
+                        match = re.search(r":telegram:dm:(\\d+)(?::|$)", skey)
+                        if match:
+                            candidates.add(match.group(1))
+            finally:
+                conn.close()
+        except Exception as exc:
+            log(f"state.db owner lookup skipped: {type(exc).__name__}")
+        if len(candidates) == 1:
+            value = next(iter(candidates))
+            log("resolved owner chat_id from Hermes session state")
+            return value
+
     return ""
 
 
