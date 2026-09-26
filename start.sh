@@ -144,6 +144,7 @@ sync_runtime_env_var() {
 }
 
 sync_runtime_env_var LLM_MODEL
+sync_runtime_env_var OPENAI_API_KEY
 sync_runtime_env_var GROQ_API_KEY
 sync_runtime_env_var OPENROUTER_API_KEY
 sync_runtime_env_var DEEPSEEK_API_KEY
@@ -196,11 +197,12 @@ def write_env_value(path, key, value):
     tmp.replace(path)
 
 env = read_env(env_path)
-for key in ("OLLAMA_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY"):
+for key in ("OPENAI_API_KEY", "OLLAMA_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY"):
     val = os.getenv(key, "").strip()
     if val:
         env[key] = val
 
+openai_ready = bool(env.get("OPENAI_API_KEY"))
 ollama_ready = bool(env.get("OLLAMA_API_KEY"))
 groq_ready = bool(env.get("GROQ_API_KEY"))
 openrouter_ready = bool(env.get("OPENROUTER_API_KEY"))
@@ -306,12 +308,19 @@ elif groq_ready:
         model.pop(stale, None)
     data["model"] = model
     write_env_value(env_path, "LLM_MODEL", "openai/gpt-oss-120b")
+elif openai_ready and os.getenv("LLM_MODEL", "").strip():
+    model["provider"] = "openai"
+    model["default"] = os.getenv("LLM_MODEL", "").strip()
+    for stale in ("base_url", "api_key", "api", "api_mode"):
+        model.pop(stale, None)
+    data["model"] = model
 
 cfg_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
 configured = []
 for name, ready in (
     ("ollama-cloud", ollama_ready),
+    ("openai", openai_ready),
     ("groq", groq_ready),
     ("deepseek", deepseek_ready),
     ("openrouter", openrouter_ready),
@@ -323,6 +332,8 @@ if ollama_ready:
     main = "ollama-cloud/gemma4:31b-cloud"
 elif groq_ready:
     main = "groq/openai/gpt-oss-120b"
+elif openai_ready:
+    main = f"openai/{os.getenv('LLM_MODEL', '').strip() or 'configured'}"
 else:
     main = "existing"
 
