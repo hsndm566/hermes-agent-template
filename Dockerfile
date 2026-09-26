@@ -191,8 +191,9 @@ COPY start.sh /app/start.sh
 COPY telegram_capture.py /app/telegram_capture.py
 COPY scripts/hermes-drive-archive.py /app/scripts/hermes-drive-archive.py
 COPY scripts/bootstrap-hermes-team.py /app/scripts/bootstrap-hermes-team.py
-RUN chmod +x /app/start.sh /app/scripts/hermes-drive-archive.py && \
-    python -m py_compile /app/server.py /app/scripts/hermes-drive-archive.py /app/scripts/bootstrap-hermes-team.py /app/scripts/patch-hermes-telegram-voice.py \
+COPY scripts/configure-telegram-topics.py /app/scripts/configure-telegram-topics.py
+RUN chmod +x /app/start.sh /app/scripts/hermes-drive-archive.py /app/scripts/configure-telegram-topics.py && \
+    python -m py_compile /app/server.py /app/scripts/hermes-drive-archive.py /app/scripts/bootstrap-hermes-team.py /app/scripts/configure-telegram-topics.py /app/scripts/patch-hermes-telegram-voice.py \
       /app/personalization/scripts/final_certify.py \
       /opt/hermes-agent/plugins/platforms/telegram/adapter.py && \
     bash -n /app/start.sh && \
