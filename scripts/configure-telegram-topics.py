@@ -25,6 +25,7 @@ import yaml
 HOME = Path(os.environ.get("HERMES_HOME", "/data/.hermes"))
 OWNER_FILE = HOME / "telegram_owner.json"
 ROUTES_FILE = HOME / "telegram_profile_routes.json"
+STATUS_FILE = HOME / "telegram_topic_setup_status.json"
 CONFIG_FILE = HOME / "config.yaml"
 ENV_FILE = HOME / ".env"
 
@@ -70,6 +71,29 @@ def atomic_text(path: Path, text: str, mode: int = 0o600) -> None:
 
 def write_yaml(path: Path, value: dict) -> None:
     atomic_text(path, yaml.safe_dump(value, sort_keys=False))
+
+def write_status(state: str, *, chat_id: str = "", topic: str = "", detail: str = "", known: dict[str, str] | None = None) -> None:
+    payload = {
+        "state": state,
+        "chat_id": chat_id,
+        "topic": topic,
+        "detail": detail[:500],
+        "known_topics": dict(known or {}),
+    }
+    atomic_text(STATUS_FILE, json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def persist_partial(chat_id: str, known: dict[str, str]) -> None:
+    topic_state: dict[str, dict[str, str]] = {}
+    profile_for = dict(TOPICS)
+    for name, tid in known.items():
+        if name in profile_for and str(tid).isdigit():
+            topic_state[name] = {"thread_id": str(tid), "profile": profile_for[name]}
+    atomic_text(
+        ROUTES_FILE,
+        json.dumps({"chat_id": chat_id, "topics": topic_state}, indent=2, sort_keys=True) + "\n",
+    )
+
 
 
 def write_env_value(path: Path, key: str, value: str) -> None:
@@ -147,11 +171,13 @@ def thread_ids_from_config(config: dict, chat_id: str) -> dict[str, str]:
 def main() -> int:
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
+        write_status("blocked", detail="TELEGRAM_BOT_TOKEN missing")
         log("TELEGRAM_BOT_TOKEN missing; topic setup deferred")
         return 2
 
     chat_id = resolve_chat_id()
     if not chat_id:
+        write_status("blocked", detail="owner chat_id unavailable")
         log("owner chat_id unavailable; topic setup deferred")
         return 3
 
@@ -173,6 +199,9 @@ def main() -> int:
 
     known.update({k: v for k, v in thread_ids_from_config(config, chat_id).items() if k not in known})
 
+    persist_partial(chat_id, known)
+    write_status("running", chat_id=chat_id, detail="starting topic reconciliation", known=known)
+
     created: list[str] = []
     for topic_name, _profile in TOPICS:
         if topic_name in known:
@@ -182,23 +211,32 @@ def main() -> int:
         except RuntimeError as exc:
             message = str(exc)
             if "TOPIC_NAME_DUPLICATE" in message.upper() or "ALREADY" in message.upper():
-                log(
-                    f"topic '{topic_name}' already exists but Telegram exposes no list-topics API; "
-                    "preserve the prior mapping or send a message in that topic so Hermes can map it"
+                detail = (
+                    f"topic '{topic_name}' already exists but its thread_id is not in persistent state; "
+                    "Telegram exposes no list-topics API"
                 )
+                write_status("duplicate_without_id", chat_id=chat_id, topic=topic_name, detail=detail, known=known)
+                log(detail)
             else:
+                write_status("telegram_error", chat_id=chat_id, topic=topic_name, detail=message, known=known)
                 log(message)
             return 4
 
         if not isinstance(result, dict):
-            log(f"Telegram createForumTopic returned no object for '{topic_name}'")
+            detail = f"Telegram createForumTopic returned no object for '{topic_name}'"
+            write_status("telegram_error", chat_id=chat_id, topic=topic_name, detail=detail, known=known)
+            log(detail)
             return 5
         tid = str(result.get("message_thread_id") or "").strip()
         if not tid.isdigit():
-            log(f"Telegram createForumTopic returned no thread id for '{topic_name}'")
+            detail = f"Telegram createForumTopic returned no thread id for '{topic_name}'"
+            write_status("telegram_error", chat_id=chat_id, topic=topic_name, detail=detail, known=known)
+            log(detail)
             return 6
         known[topic_name] = tid
         created.append(topic_name)
+        persist_partial(chat_id, known)
+        write_status("running", chat_id=chat_id, topic=topic_name, detail="captured real thread_id", known=known)
 
         try:
             telegram_api(
@@ -219,7 +257,9 @@ def main() -> int:
     for topic_name, profile in TOPICS:
         tid = known.get(topic_name, "")
         if not tid:
-            log(f"missing thread id after setup: {topic_name}")
+            detail = f"missing thread id after setup: {topic_name}"
+            write_status("incomplete", chat_id=chat_id, topic=topic_name, detail=detail, known=known)
+            log(detail)
             return 7
         routes.append(
             {
@@ -272,6 +312,7 @@ def main() -> int:
     route_json = json.dumps(routes, separators=(",", ":"), sort_keys=True)
     write_env_value(ENV_FILE, "HERMES_TELEGRAM_PROFILE_ROUTES_JSON", route_json)
 
+    write_status("ready", chat_id=chat_id, detail="all five topics mapped", known=known)
     log(
         "READY "
         + " ".join(f"{name}={known[name]}" for name, _ in TOPICS)

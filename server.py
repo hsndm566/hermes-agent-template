@@ -1934,25 +1934,65 @@ async def telegram_route_audit(request: Request):
     if not supplied or not _hmac.compare_digest(supplied_hash, TELEGRAM_ROUTE_AUDIT_SHA256):
         return JSONResponse({"error": "Not found"}, status_code=404)
 
-    path = Path("/data/.hermes/telegram_profile_routes.json")
-    if not path.exists():
-        return JSONResponse({"ready": False, "reason": "mapping_not_created"}, status_code=503)
+    retry_result = None
+    if request.query_params.get("retry") == "1":
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "python", "/app/scripts/configure-telegram-topics.py",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=90)
+            stderr = stderr_b.decode("utf-8", errors="replace")
+            # The helper is designed to log no secrets; still redact common token shapes defensively.
+            stderr = re.sub(r"bot\d+:[A-Za-z0-9_-]+", "bot[REDACTED]", stderr)
+            retry_result = {
+                "rc": proc.returncode,
+                "detail": "\n".join(stderr.splitlines()[-8:])[-1600:],
+            }
+            if proc.returncode == 0:
+                asyncio.create_task(gw.restart())
+        except asyncio.TimeoutError:
+            retry_result = {"rc": 124, "detail": "topic setup timed out"}
+        except Exception as exc:
+            retry_result = {"rc": 125, "detail": f"{type(exc).__name__}"}
+
+    status_path = Path("/data/.hermes/telegram_topic_setup_status.json")
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        chat_id = str(raw.get("chat_id") or "")
-        topics = raw.get("topics") if isinstance(raw.get("topics"), dict) else {}
-        clean = []
-        for name in ("Main", "Marketing", "Auditor", "CFO", "Domain"):
-            item = topics.get(name) if isinstance(topics.get(name), dict) else {}
-            clean.append({
-                "name": name,
-                "profile": str(item.get("profile") or ""),
-                "thread_id": str(item.get("thread_id") or ""),
-            })
-        ready = bool(chat_id) and all(x["profile"] and x["thread_id"] for x in clean)
-        return JSONResponse({"ready": ready, "chat_id": chat_id, "topics": clean})
+        status = json.loads(status_path.read_text(encoding="utf-8")) if status_path.exists() else {}
     except Exception:
-        return JSONResponse({"ready": False, "reason": "mapping_unreadable"}, status_code=503)
+        status = {"state": "status_unreadable"}
+
+    path = Path("/data/.hermes/telegram_profile_routes.json")
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except Exception:
+        raw = {}
+
+    chat_id = str(raw.get("chat_id") or status.get("chat_id") or "")
+    topics = raw.get("topics") if isinstance(raw.get("topics"), dict) else {}
+    clean = []
+    for name in ("Main", "Marketing", "Auditor", "CFO", "Domain"):
+        item = topics.get(name) if isinstance(topics.get(name), dict) else {}
+        clean.append({
+            "name": name,
+            "profile": str(item.get("profile") or ""),
+            "thread_id": str(item.get("thread_id") or ""),
+        })
+    ready = bool(chat_id) and all(x["profile"] and x["thread_id"] for x in clean)
+    body = {
+        "ready": ready,
+        "chat_id": chat_id,
+        "topics": clean,
+        "setup_status": {
+            "state": str(status.get("state") or ("ready" if ready else "unknown")),
+            "topic": str(status.get("topic") or ""),
+            "detail": str(status.get("detail") or ""),
+        },
+    }
+    if retry_result is not None:
+        body["retry"] = retry_result
+    return JSONResponse(body, status_code=200 if ready or retry_result is not None else 503)
 
 
 async def api_config_get(request: Request):

@@ -924,7 +924,7 @@ mkdir -p "$HERMES_DB_BASE_DIR"
 # chat_id/thread_id profile mapping before Hermes loads gateway.profile_routes.
 # This is idempotent and never prints the Telegram bot token.
 if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
-  if HERMES_TELEGRAM_PROFILE_ROUTES_JSON="$(python /app/scripts/configure-telegram-topics.py)"; then
+  if HERMES_TELEGRAM_PROFILE_ROUTES_JSON="$(timeout 75s python /app/scripts/configure-telegram-topics.py)"; then
     export HERMES_TELEGRAM_PROFILE_ROUTES_JSON
     sync_runtime_env_var HERMES_TELEGRAM_PROFILE_ROUTES_JSON
     echo "[telegram-routes] exported HERMES_TELEGRAM_PROFILE_ROUTES_JSON from real Telegram topic IDs" >&2
