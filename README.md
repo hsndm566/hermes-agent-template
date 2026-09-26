@@ -69,6 +69,10 @@ Message your Telegram bot. If you're a new user, a pairing request will appear i
 | `ADMIN_USERNAME` | `admin` | Login username |
 | `ADMIN_PASSWORD` | *(auto-generated)* | Login password — if unset, a random password is printed to the deploy logs. Changing it redeploys the service, which signs everyone out. |
 | `HERMES_REF` | *(pinned in Dockerfile)* | Hermes Agent version to install (any upstream git tag/branch). Set this to override the Dockerfile default without editing code — see [Updating Hermes](#updating-hermes). |
+| `HONCHO_API_KEY` | *(empty)* | Honcho Cloud credential. Kept as a deployment secret and consumed by every profile. |
+| `HERMES_HONCHO_WORKSPACE` | `hasan` | Shared Honcho workspace for the Coordinator and specialist profiles. |
+| `HERMES_HONCHO_OWNER_PEER` | `hasan` | Stable human peer name; profile bootstrap pins runtime identities to it. |
+| `HERMES_TELEGRAM_PROFILE_ROUTES_JSON` | *(empty)* | Optional JSON list of real Telegram `{chat_id, thread_id, profile}` routes. One shared bot remains the ingress; unmatched messages go to the Coordinator. |
 
 All other configuration (LLM provider, model, channels, tools) is managed through the admin dashboard.
 
@@ -108,6 +112,22 @@ Railway Container
 The Hermes dashboard is **never exposed directly** — it binds loopback and is reachable only through the proxy, so one login covers both UIs. The gateway is supervised: if it crashes or is OOM-killed, `server.py` restarts it with backoff, giving up only if it fails repeatedly (Railway would not restart it on its own, because `server.py` is still alive and healthy).
 
 Config lives on the `/data` volume at `/data/.hermes/` (`.env`, `config.yaml`, `auth.json`, sessions, pairing state) and survives redeploys. Gateway output is captured into a ring buffer and streamed to the Logs panel.
+
+### Shared Honcho memory and Telegram topics
+
+The deployment bootstrap writes supported Hermes `honcho.json` files for the default
+Coordinator and `marketing`, `auditor`, and `cfo` profiles. They share the `hasan`
+workspace and pinned owner peer, but use distinct AI peers (`coordinator`,
+`marketing`, `auditor`, and `cfo`) so Honcho attribution remains clear. The API key
+is never written to these files; Hermes resolves it from `HONCHO_API_KEY`.
+
+The default topology is **one Telegram bot → Coordinator → internal Hermes
+specialists**. If you want Telegram topics to enter a specialist directly, create
+the topics in the Telegram client (or with the bot's authorized topic tooling),
+obtain their actual numeric `chat_id` and `thread_id`, and set
+`HERMES_TELEGRAM_PROFILE_ROUTES_JSON`. Hermes then applies its upstream
+`gateway.profile_routes` matcher. The bootstrap rejects incomplete routes and never
+guesses topic IDs. No specialist Telegram bot tokens are needed.
 
 ## Running Locally
 

@@ -15,6 +15,7 @@ import json
 import os
 import shutil
 import subprocess
+
 from pathlib import Path
 
 import yaml
@@ -22,6 +23,45 @@ import yaml
 ROOT = Path(os.environ.get("HERMES_HOME", "/data/.hermes"))
 PROFILES = ROOT / "profiles"
 STATUS_PATH = ROOT / "team" / "status.json"
+
+HONCHO_WORKSPACE = os.getenv("HERMES_HONCHO_WORKSPACE", "hasan").strip() or "hasan"
+HONCHO_OWNER_PEER = os.getenv("HERMES_HONCHO_OWNER_PEER", "hasan").strip() or "hasan"
+
+
+def topic_routes_from_env() -> list[dict]:
+    """Return only explicit, valid Telegram routes; IDs must come from Telegram."""
+    raw = os.getenv("HERMES_TELEGRAM_PROFILE_ROUTES_JSON", "").strip()
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(f"[team] invalid HERMES_TELEGRAM_PROFILE_ROUTES_JSON: {exc.msg}", flush=True)
+        return []
+    if not isinstance(value, list):
+        print("[team] HERMES_TELEGRAM_PROFILE_ROUTES_JSON must be a JSON list", flush=True)
+        return []
+    routes = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        profile = str(item.get("profile", "")).strip()
+        thread_id = str(item.get("thread_id", "")).strip()
+        chat_id = str(item.get("chat_id", "")).strip()
+        if profile not in TEAM_NAMES or not thread_id or not chat_id:
+            print("[team] skipped Telegram route without known profile, chat_id, and thread_id", flush=True)
+            continue
+        routes.append({
+            "name": str(item.get("name") or f"telegram-{profile}-{thread_id}"),
+            "platform": "telegram",
+            "chat_id": chat_id,
+            "thread_id": thread_id,
+            "profile": profile,
+            "enabled": bool(item.get("enabled", True)),
+        })
+    return routes
+
+TEAM_NAMES = {"marketing", "auditor", "cfo"}
 
 TEAM = {
     "marketing": {
@@ -164,6 +204,41 @@ def ensure_bot_metadata(home: Path, *, title: str, description: str) -> None:
     write_yaml(path, data)
 
 
+def ensure_honcho_config(home: Path, *, ai_peer: str) -> None:
+    """Persist supported Honcho identity settings without persisting the API key.
+
+    HONCHO_API_KEY remains a deployment secret and is resolved from the environment
+    by Hermes. All profiles share one workspace and owner peer, while each profile
+    has a distinct AI peer so memory attribution remains unambiguous.
+    """
+    path = home / "honcho.json"
+    data = {}
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(existing, dict):
+            data = existing
+    except (OSError, json.JSONDecodeError):
+        pass
+    data.update({
+        "workspace": HONCHO_WORKSPACE,
+        "peerName": HONCHO_OWNER_PEER,
+        "pinUserPeer": True,
+        "aiPeer": ai_peer,
+        "sessionStrategy": "per-session",
+        "saveMessages": True,
+        "writeFrequency": "async",
+        "recallMode": "hybrid",
+        "enabled": True,
+    })
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass
+    tmp.replace(path)
+
 def ensure_config(home: Path, *, toolsets: list[str] | None = None, token_present: bool = False) -> None:
     path = home / "config.yaml"
     data = load_yaml(path)
@@ -179,6 +254,12 @@ def ensure_config(home: Path, *, toolsets: list[str] | None = None, token_presen
         if not isinstance(gateway, dict):
             gateway = {}
         gateway["multiplex_profiles"] = True
+        routes = topic_routes_from_env()
+        if routes:
+            gateway["profile_routes"] = routes
+        else:
+            # Do not retain stale routes when the deployment no longer supplies IDs.
+            gateway.pop("profile_routes", None)
         data["gateway"] = gateway
     else:
         gateway = data.get("gateway")
@@ -304,7 +385,9 @@ def configure() -> int:
 
     ensure_bot_metadata(ROOT, title="Coordinator", description="Receives human tasks, delegates specialist work, verifies completion, and consolidates results.")
     ensure_config(ROOT)
+    ensure_honcho_config(ROOT, ai_peer="coordinator")
     append_coordinator_role()
+    configured_routes = topic_routes_from_env()
 
     status: dict[str, object] = {
         "configured": True,
@@ -314,6 +397,17 @@ def configure() -> int:
         "specialist_telegram_tokens_required": False,
         "profiles": {},
         "local_stt": "faster-whisper/base-baked-cpu-int8",
+        "honcho": {
+            "workspace": HONCHO_WORKSPACE,
+            "owner_peer": HONCHO_OWNER_PEER,
+            "api_key_source": "HONCHO_API_KEY deployment secret",
+            "profiles": {"default": "coordinator", **{name: name for name in TEAM}},
+        },
+        "telegram_topic_routes": {
+            "configured": len(configured_routes),
+            "source": "HERMES_TELEGRAM_PROFILE_ROUTES_JSON",
+            "note": "Routes require real Telegram chat_id/thread_id values; no IDs are fabricated.",
+        },
     }
 
     for name, spec in TEAM.items():
@@ -332,6 +426,7 @@ def configure() -> int:
             ensure_bot_metadata(home, title=spec["title"], description=spec["description"])
             ensure_specialist_env(home, token)
             ensure_config(home, toolsets=spec["toolsets"], token_present=bool(token))
+            ensure_honcho_config(home, ai_peer=name)
             if token:
                 copy_owner_telegram_approval(home)
             entry["bot_mode_marked"] = True
