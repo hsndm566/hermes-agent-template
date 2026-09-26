@@ -2013,6 +2013,7 @@ async def telegram_route_audit(request: Request):
         })
     ready = bool(chat_id) and all(x["profile"] and x["thread_id"] for x in clean)
     body = {
+        "audit_revision": "owner-recovery-v1",
         "ready": ready,
         "chat_id": chat_id,
         "topics": clean,

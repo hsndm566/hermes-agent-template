@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "Dockerfile"
+      - "server.py"
       - "start.sh"
       - "requirements.txt"
       - "scripts/**"
@@ -48,7 +49,7 @@ jobs:
             test -s /opt/faster-whisper-models/base/model.bin
             test -s /opt/faster-whisper-models/base/config.json
             /opt/hierarchy-venv/bin/python -c "from core.registry.profile_registry import ProfileRegistry; from core.ipc.message_bus import MessageBus"
-            python -m py_compile /app/server.py /app/scripts/bootstrap-hermes-team.py /app/scripts/patch-hermes-telegram-voice.py
+            python -m py_compile /app/server.py /app/scripts/bootstrap-hermes-team.py /app/scripts/configure-telegram-topics.py /app/scripts/patch-hermes-telegram-voice.py
             bash -n /app/start.sh
             grep -Fq "unload_after_idle_seconds" /app/start.sh
             grep -Fq "/opt/faster-whisper-models/base" /app/start.sh
