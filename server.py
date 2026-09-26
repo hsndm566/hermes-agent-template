@@ -2025,7 +2025,7 @@ async def telegram_route_audit(request: Request):
     }
     if retry_result is not None:
         body["retry"] = retry_result
-    return JSONResponse(body, status_code=200 if ready or retry_result is not None else 503)
+    return JSONResponse(body, status_code=200)
 
 
 async def api_config_get(request: Request):
