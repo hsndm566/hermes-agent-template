@@ -116,6 +116,27 @@ def resolve_chat_id() -> str:
     if candidate.isdigit() and int(candidate) > 0:
         return candidate
 
+    # Reuse Hermes' already-approved Telegram owner before touching Bot API
+    # polling. Current Hermes stores approvals under platforms/pairing; older
+    # deployments may still use the legacy pairing directory.
+    for approved_path in (
+        HOME / "platforms" / "pairing" / "telegram-approved.json",
+        HOME / "pairing" / "telegram-approved.json",
+    ):
+        approved = read_json(approved_path)
+        candidates: list[str] = []
+        for key, value in approved.items():
+            if isinstance(value, dict):
+                uid = str(value.get("user_id") or key or "").strip()
+            else:
+                uid = str(key or "").strip()
+            if uid.isdigit() and int(uid) > 0:
+                candidates.append(uid)
+        unique = sorted(set(candidates))
+        if len(unique) == 1:
+            log(f"resolved owner chat_id from Hermes approved pairing state ({approved_path.parent.name})")
+            return unique[0]
+
     allowed = os.getenv("TELEGRAM_ALLOWED_USERS", "").strip()
     ids = [part for part in re.split(r"[\\s,;]+", allowed) if part]
     ids = [part for part in ids if part.isdigit() and int(part) > 0]
