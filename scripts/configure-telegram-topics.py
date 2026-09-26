@@ -214,6 +214,57 @@ def telegram_api(token: str, method: str, params: dict) -> object:
     return payload.get("result")
 
 
+def resolve_chat_id_from_pending_update(token: str) -> str:
+    """Read, but do not acknowledge, one pending private Telegram update.
+
+    Enabled only during container startup before Hermes starts its long-poll
+    adapter. No offset is supplied, so the update is not acknowledged.
+    """
+    try:
+        updates = telegram_api(
+            token,
+            "getUpdates",
+            {
+                "timeout": "0",
+                "limit": "100",
+                "allowed_updates": json.dumps(
+                    ["message", "edited_message", "business_message", "edited_business_message"]
+                ),
+            },
+        )
+    except RuntimeError as exc:
+        log(f"pending-update owner lookup skipped: {exc}")
+        return ""
+
+    candidates: list[tuple[int, str]] = []
+    for update in updates if isinstance(updates, list) else []:
+        if not isinstance(update, dict):
+            continue
+        update_id = int(update.get("update_id") or 0)
+        msg = None
+        for key in ("message", "edited_message", "business_message", "edited_business_message"):
+            if isinstance(update.get(key), dict):
+                msg = update[key]
+                break
+        if not isinstance(msg, dict):
+            continue
+        chat = msg.get("chat") if isinstance(msg.get("chat"), dict) else {}
+        sender = msg.get("from") if isinstance(msg.get("from"), dict) else {}
+        if chat.get("type") != "private" or sender.get("is_bot") is True:
+            continue
+        cid = str(chat.get("id") or sender.get("id") or "").strip()
+        if cid.isdigit() and int(cid) > 0:
+            candidates.append((update_id, cid))
+
+    unique = {cid for _, cid in candidates}
+    if len(unique) == 1:
+        cid = next(iter(unique))
+        log("resolved owner chat_id from pending Telegram private update")
+        return cid
+    if len(unique) > 1:
+        log("pending Telegram updates contain multiple private users; refusing to guess owner")
+    return ""
+
 def thread_ids_from_config(config: dict, chat_id: str) -> dict[str, str]:
     out: dict[str, str] = {}
     try:
@@ -243,6 +294,17 @@ def main() -> int:
         return 2
 
     chat_id = resolve_chat_id()
+    if not chat_id and os.getenv("HERMES_TOPIC_BOOTSTRAP_ALLOW_GET_UPDATES", "").strip().lower() in {"1", "true", "yes"}:
+        chat_id = resolve_chat_id_from_pending_update(token)
+        if chat_id:
+            import time as _time
+            owner = {
+                "user_id": chat_id,
+                "chat_id": chat_id,
+                "captured_at": int(_time.time()),
+                "source": "pending-update-bootstrap",
+            }
+            atomic_text(OWNER_FILE, json.dumps(owner, indent=2, sort_keys=True) + "\n")
     if not chat_id:
         write_status("blocked", detail="owner chat_id unavailable")
         log("owner chat_id unavailable; topic setup deferred")
