@@ -24,9 +24,12 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import yaml
+
 HOME = Path(os.environ.get("HERMES_HOME", "/data/.hermes"))
 ENV_FILE = HOME / ".env"
 OWNER_FILE = HOME / "telegram_owner.json"
+CONFIG_FILE = HOME / "config.yaml"
 PAIRING_DIR = HOME / "platforms" / "pairing"
 APPROVED_FILE = PAIRING_DIR / "telegram-approved.json"
 MARKER = HOME / ".telegram_first_user_lock_done"
@@ -195,6 +198,34 @@ def persist_owner(uid: str, source: str) -> None:
     )
     atomic_text(MARKER, "locked\n")
     write_env_value("TELEGRAM_ALLOWED_USERS", uid)
+
+    # Lock the native Telegram adapter to this owner. This is deliberately
+    # separate from forum-topic/profile routing.
+    try:
+        data = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    gateway = data.setdefault("gateway", {})
+    if not isinstance(gateway, dict):
+        gateway = {}
+        data["gateway"] = gateway
+    platforms = gateway.setdefault("platforms", {})
+    if not isinstance(platforms, dict):
+        platforms = {}
+        gateway["platforms"] = platforms
+    telegram = platforms.setdefault("telegram", {})
+    if not isinstance(telegram, dict):
+        telegram = {}
+        platforms["telegram"] = telegram
+    telegram["enabled"] = True
+    extra = telegram.setdefault("extra", {})
+    if not isinstance(extra, dict):
+        extra = {}
+        telegram["extra"] = extra
+    extra["dm_policy"] = "allowlist"
+    atomic_text(CONFIG_FILE, yaml.safe_dump(data, sort_keys=False))
 
 
 def main() -> int:
