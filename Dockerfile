@@ -192,8 +192,9 @@ COPY telegram_capture.py /app/telegram_capture.py
 COPY scripts/hermes-drive-archive.py /app/scripts/hermes-drive-archive.py
 COPY scripts/bootstrap-hermes-team.py /app/scripts/bootstrap-hermes-team.py
 COPY scripts/configure-telegram-topics.py /app/scripts/configure-telegram-topics.py
-RUN chmod +x /app/start.sh /app/scripts/hermes-drive-archive.py /app/scripts/configure-telegram-topics.py && \
-    python -m py_compile /app/server.py /app/scripts/hermes-drive-archive.py /app/scripts/bootstrap-hermes-team.py /app/scripts/configure-telegram-topics.py /app/scripts/patch-hermes-telegram-voice.py \
+COPY scripts/recover-telegram-owner.py /app/scripts/recover-telegram-owner.py
+RUN chmod +x /app/start.sh /app/scripts/hermes-drive-archive.py /app/scripts/configure-telegram-topics.py /app/scripts/recover-telegram-owner.py && \
+    python -m py_compile /app/server.py /app/scripts/hermes-drive-archive.py /app/scripts/bootstrap-hermes-team.py /app/scripts/configure-telegram-topics.py /app/scripts/recover-telegram-owner.py /app/scripts/patch-hermes-telegram-voice.py \
       /app/personalization/scripts/final_certify.py \
       /opt/hermes-agent/plugins/platforms/telegram/adapter.py && \
     bash -n /app/start.sh && \
@@ -213,7 +214,7 @@ ENV HERMES_HOME=/data/.hermes
 # and avoids the 30-60s npm bootstrap that git-editable installs would otherwise
 # trigger on first /chat connection.
 ENV HERMES_TUI_DIR=/opt/hermes-agent/ui-tui
-ENV HERMES_TEMPLATE_REV=telegram-owner-recovery-v1
+ENV HERMES_TEMPLATE_REV=telegram-owner-dm-recovery-v2
 
 # tini wraps start.sh so it runs as PID 1's child instead of as PID 1 itself.
 # `-g` propagates signals to the whole process group so `docker stop` /
