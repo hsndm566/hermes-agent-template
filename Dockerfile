@@ -214,7 +214,7 @@ ENV HERMES_HOME=/data/.hermes
 # and avoids the 30-60s npm bootstrap that git-editable installs would otherwise
 # trigger on first /chat connection.
 ENV HERMES_TUI_DIR=/opt/hermes-agent/ui-tui
-ENV HERMES_TEMPLATE_REV=telegram-owner-dm-recovery-v2
+ENV HERMES_TEMPLATE_REV=telegram-owner-dm-recovery-v3
 
 # tini wraps start.sh so it runs as PID 1's child instead of as PID 1 itself.
 # `-g` propagates signals to the whole process group so `docker stop` /
