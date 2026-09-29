@@ -1194,7 +1194,7 @@ COOKIE_MAX_AGE = 7 * 86400  # 7 days
 COOKIE_SECRET = secrets.token_bytes(32)
 
 # Public paths — no auth required. Everything else is behind the cookie gate.
-PUBLIC_PATHS = {"/health", "/telegram-route-audit", "/setup/login", "/logout"}
+PUBLIC_PATHS = {"/health", "/setup/login", "/logout"}
 
 
 def _make_auth_token() -> str:
@@ -1919,113 +1919,10 @@ async def route_health(request: Request):
             "status": "ok" if healthy else "degraded",
             "gateway": gw.state,
             "voice_stt": "ready" if voice_ready else "not_ready",
+            "build_sha": os.getenv("HERMES_DEPLOYED_SHA", "unknown"),
         },
         status_code=200 if healthy else 503,
     )
-
-
-TELEGRAM_ROUTE_AUDIT_SHA256 = "4d1cf9807f15a8aa6b1b9a7dd1eea495462a38b8c430fb839df478dd3a134ef5"
-
-
-async def telegram_route_audit(request: Request):
-    """Temporary acceptance endpoint: returns only chat/topic/profile IDs, never credentials."""
-    supplied = request.query_params.get("key", "")
-    supplied_hash = _hashlib.sha256(supplied.encode("utf-8")).hexdigest()
-    if not supplied or not _hmac.compare_digest(supplied_hash, TELEGRAM_ROUTE_AUDIT_SHA256):
-        return JSONResponse({"error": "Not found"}, status_code=404)
-
-    retry_result = None
-    if request.query_params.get("retry") == "1":
-        gateway_paused_for_owner_recovery = False
-        try:
-            helper_path = Path("/app/scripts/configure-telegram-topics.py")
-            if not helper_path.exists():
-                helper_path = Path("/tmp/configure-telegram-topics.py")
-                helper_url = (
-                    "https://raw.githubusercontent.com/hsndm566/hermes-agent-template/"
-                    "main/scripts/configure-telegram-topics.py"
-                )
-                async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-                    helper_resp = await client.get(helper_url)
-                    helper_resp.raise_for_status()
-                helper_path.write_text(helper_resp.text, encoding="utf-8")
-                os.chmod(helper_path, 0o700)
-
-            helper_env = os.environ.copy()
-            if request.query_params.get("recover_owner") == "1":
-                # The helper's Bot API getUpdates fallback is only safe while
-                # Hermes' long poller is stopped. Stop the managed gateway,
-                # inspect without an offset (so no update is acknowledged),
-                # then bring the exact same gateway back.
-                await gw.stop()
-                gateway_paused_for_owner_recovery = True
-                helper_env["HERMES_TOPIC_BOOTSTRAP_ALLOW_GET_UPDATES"] = "true"
-
-            proc = await asyncio.create_subprocess_exec(
-                "python", str(helper_path),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=helper_env,
-            )
-            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=90)
-            stderr = stderr_b.decode("utf-8", errors="replace")
-            # The helper is designed to log no secrets; still redact common token shapes defensively.
-            stderr = re.sub(r"bot\d+:[A-Za-z0-9_-]+", "bot[REDACTED]", stderr)
-            retry_result = {
-                "rc": proc.returncode,
-                "detail": "\n".join(stderr.splitlines()[-8:])[-1600:],
-            }
-            if proc.returncode == 0 and not gateway_paused_for_owner_recovery:
-                asyncio.create_task(gw.restart())
-        except asyncio.TimeoutError:
-            retry_result = {"rc": 124, "detail": "topic setup timed out"}
-        except Exception as exc:
-            retry_result = {"rc": 125, "detail": f"{type(exc).__name__}"}
-        finally:
-            if gateway_paused_for_owner_recovery:
-                try:
-                    await gw.start()
-                except Exception as exc:
-                    if retry_result is None:
-                        retry_result = {"rc": 126, "detail": f"gateway restart failed: {type(exc).__name__}"}
-
-    status_path = Path("/data/.hermes/telegram_topic_setup_status.json")
-    try:
-        status = json.loads(status_path.read_text(encoding="utf-8")) if status_path.exists() else {}
-    except Exception:
-        status = {"state": "status_unreadable"}
-
-    path = Path("/data/.hermes/telegram_profile_routes.json")
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    except Exception:
-        raw = {}
-
-    chat_id = str(raw.get("chat_id") or status.get("chat_id") or "")
-    topics = raw.get("topics") if isinstance(raw.get("topics"), dict) else {}
-    clean = []
-    for name in ("Main", "Marketing", "Auditor", "CFO", "Domain"):
-        item = topics.get(name) if isinstance(topics.get(name), dict) else {}
-        clean.append({
-            "name": name,
-            "profile": str(item.get("profile") or ""),
-            "thread_id": str(item.get("thread_id") or ""),
-        })
-    ready = bool(chat_id) and all(x["profile"] and x["thread_id"] for x in clean)
-    body = {
-        "audit_revision": "owner-recovery-v1",
-        "ready": ready,
-        "chat_id": chat_id,
-        "topics": clean,
-        "setup_status": {
-            "state": str(status.get("state") or ("ready" if ready else "unknown")),
-            "topic": str(status.get("topic") or ""),
-            "detail": str(status.get("detail") or ""),
-        },
-    }
-    if retry_result is not None:
-        body["retry"] = retry_result
-    return JSONResponse(body, status_code=200)
 
 
 async def api_config_get(request: Request):
@@ -3364,7 +3261,6 @@ ANY_METHOD = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
 routes = [
     # Public — no auth required.
     Route("/health",                            route_health),
-    Route("/telegram-route-audit",              telegram_route_audit),
     # Our sign-in lives under /setup/* so the bare /login path stays free.
     # hermes' own gated dashboard redirects unauthenticated requests there, and
     # a route of ours at /login would answer instead — the browser would bounce

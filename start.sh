@@ -965,8 +965,8 @@ echo "[team] Bot Chat initializer + native delegation smoke test scheduled" >&2
   exit 0
 ) &
 
-# Recover the personal Telegram DM owner while no Hermes long-poller is
-# running. This is safe to repeat and never creates forum topics.
+# Recover the personal Telegram DM owner while no Hermes long-poller is running.
+# This never creates Telegram forum topics and refuses to guess among multiple users.
 if [ -x /app/scripts/recover-telegram-owner.py ]; then
   python /app/scripts/recover-telegram-owner.py || true
   echo "[telegram-owner] pre-gateway recovery finished" >&2

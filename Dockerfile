@@ -9,6 +9,7 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 # `v2026.5.29.2`) and update the default below. Use `main` only if you accept
 # that every rebuild can pull arbitrary new upstream commits.
 ARG HERMES_REF=v2026.9.11
+ARG NF_GIT_SHA=unknown
 
 # Persist the build arg into the runtime env so the admin UI can display which
 # Hermes release this image actually pins. Reading it (rather than hardcoding a
@@ -16,6 +17,7 @@ ARG HERMES_REF=v2026.9.11
 # HERMES_REF as a Railway service variable to pin an older release — a Railway
 # runtime variable simply shadows this ENV, so the UI still shows the truth.
 ENV HERMES_REF=${HERMES_REF}
+ENV HERMES_DEPLOYED_SHA=${NF_GIT_SHA}
 
 # tini = tiny init that we run as PID 1. Without it, hermes's grandchild
 # processes (MCP stdio servers, git, bun, browser daemons spawned by tools)
@@ -191,10 +193,9 @@ COPY start.sh /app/start.sh
 COPY telegram_capture.py /app/telegram_capture.py
 COPY scripts/hermes-drive-archive.py /app/scripts/hermes-drive-archive.py
 COPY scripts/bootstrap-hermes-team.py /app/scripts/bootstrap-hermes-team.py
-COPY scripts/configure-telegram-topics.py /app/scripts/configure-telegram-topics.py
 COPY scripts/recover-telegram-owner.py /app/scripts/recover-telegram-owner.py
-RUN chmod +x /app/start.sh /app/scripts/hermes-drive-archive.py /app/scripts/configure-telegram-topics.py /app/scripts/recover-telegram-owner.py && \
-    python -m py_compile /app/server.py /app/scripts/hermes-drive-archive.py /app/scripts/bootstrap-hermes-team.py /app/scripts/configure-telegram-topics.py /app/scripts/recover-telegram-owner.py /app/scripts/patch-hermes-telegram-voice.py \
+RUN chmod +x /app/start.sh /app/scripts/hermes-drive-archive.py /app/scripts/recover-telegram-owner.py && \
+    python -m py_compile /app/server.py /app/scripts/hermes-drive-archive.py /app/scripts/bootstrap-hermes-team.py /app/scripts/recover-telegram-owner.py /app/scripts/patch-hermes-telegram-voice.py \
       /app/personalization/scripts/final_certify.py \
       /opt/hermes-agent/plugins/platforms/telegram/adapter.py && \
     bash -n /app/start.sh && \
@@ -214,7 +215,6 @@ ENV HERMES_HOME=/data/.hermes
 # and avoids the 30-60s npm bootstrap that git-editable installs would otherwise
 # trigger on first /chat connection.
 ENV HERMES_TUI_DIR=/opt/hermes-agent/ui-tui
-ENV HERMES_TEMPLATE_REV=telegram-owner-dm-recovery-v3
 
 # tini wraps start.sh so it runs as PID 1's child instead of as PID 1 itself.
 # `-g` propagates signals to the whole process group so `docker stop` /
