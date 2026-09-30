@@ -349,7 +349,7 @@ print(
     f"main={main} aliases={','.join(sorted(aliases)) or 'none'} "
     f"fallbacks={len(fallbacks)} "
     f"vision={'gemma4:31b-cloud' if ollama_ready else 'default'} "
-    f"stt={'local/faster-whisper-base-baked-cpu-int8' if local_stt_enabled else 'disabled-for-free-tier'},
+    f"stt={'local/faster-whisper-base-baked-cpu-int8' if local_stt_enabled else 'disabled-for-free-tier'}",
     flush=True,
 )
 PY
