@@ -1924,7 +1924,10 @@ async def route_health(request: Request):
             "status": "ok" if healthy else "degraded",
             "gateway": gw.state,
             "voice_stt": "ready" if voice_ready else "not_ready",
-            "build_sha": os.getenv("HERMES_DEPLOYED_SHA", "unknown"),
+            # Northflank injects the immutable serving SHA at runtime. Prefer
+            # it over the optional template variable so health never reports
+            # a stale commit after an image rollout.
+            "build_sha": os.getenv("NF_DEPLOYMENT_SHA") or os.getenv("HERMES_DEPLOYED_SHA", "unknown"),
         },
         status_code=200 if healthy else 503,
     )
