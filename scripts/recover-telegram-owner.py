@@ -103,6 +103,24 @@ def existing_owner() -> str:
                 allowed.add(part)
     if len(allowed) == 1:
         return next(iter(allowed))
+
+    # /sethome persists the owner's private chat in the gateway config.  This
+    # is a durable, user-selected identity and is safe to reuse for the
+    # private allowlist after a restart.  Restrict this fallback to positive
+    # numeric IDs so a group/channel cannot silently become the DM owner.
+    try:
+        config = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
+    except Exception:
+        config = {}
+    try:
+        telegram = config["gateway"]["platforms"]["telegram"]
+        home = telegram.get("home_channel") if isinstance(telegram, dict) else None
+        chat_id = home.get("chat_id") if isinstance(home, dict) else None
+        candidate = str(chat_id or "").strip()
+        if candidate.isdigit() and int(candidate) > 0:
+            return candidate
+    except (KeyError, TypeError, AttributeError):
+        pass
     return ""
 
 
