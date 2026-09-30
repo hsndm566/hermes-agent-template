@@ -826,6 +826,7 @@ install_skill_if_missing() {
 
 # Install third-party/optional skills in the background so a slow registry
 # can never hold the Telegram gateway's health check hostage.
+if [ "${HERMES_ENABLE_BACKGROUND_TASKS:-0}" = "1" ]; then
 (
 # Stagger non-critical post-boot work so the 1 GB Trial service never launches
 # skill installation, certification, Bot Chat initialization, and archive work at once.
@@ -879,6 +880,9 @@ install_skill_if_missing google-workspace amanning3390/hermeshub/skills/google-w
 timeout 45s hermes skills audit >/tmp/hermes-skills-audit.log 2>&1 || true
 echo "[skills] curated pack ready"
 ) &
+else
+  echo "[skills] background installer disabled for low-memory Telegram runtime"
+fi
 # Non-secret GitHub boot diagnostic. Railway keeps the token in service variables;
 # this only confirms the credential resolves and can read the Hermes repository.
 if command -v gh >/dev/null 2>&1 && [ -n "${GITHUB_TOKEN:-}" ]; then
@@ -902,14 +906,18 @@ echo "[skills] background installer started"
 # External storage worker: keep Railway as fast live state, use Google Drive for
 # durable snapshots/log archives. The worker is a no-op until Hermes' own Google
 # OAuth token exists. Archives are built under /tmp, never on the persistent disk.
-(
-  sleep 180
-  while true; do
-    python /app/scripts/hermes-drive-archive.py || true
-    sleep 21600
-  done
-) &
-echo "[drive-archive] worker started (6h cadence)"
+if [ "${HERMES_ENABLE_BACKGROUND_TASKS:-0}" = "1" ]; then
+  (
+    sleep 180
+    while true; do
+      python /app/scripts/hermes-drive-archive.py || true
+      sleep 21600
+    done
+  ) &
+  echo "[drive-archive] worker started (6h cadence)"
+else
+  echo "[drive-archive] disabled for low-memory Telegram runtime"
+fi
 # ---- END HASAN PERSONAL HERMES BOOTSTRAP v2 ----
 
 
@@ -935,35 +943,47 @@ df -h /data >&2 || true
 # provides the org chart + IPC/shared state; actual agent execution stays on
 # Hermes' native Bot Mode because the third-party gateway's task executor is
 # incomplete in the pinned upstream implementation.
-if ! python /app/scripts/bootstrap-hermes-team.py sync-hierarchy; then
-  echo "[hierarchy] sync incomplete; native Hermes team remains available" >&2
+if [ "${HERMES_ENABLE_HIERARCHY:-0}" = "1" ]; then
+  if ! python /app/scripts/bootstrap-hermes-team.py sync-hierarchy; then
+    echo "[hierarchy] sync incomplete; native Hermes team remains available" >&2
+  fi
+else
+  echo "[hierarchy] external hierarchy runtime disabled; native Hermes profiles remain active" >&2
 fi
 
 # Canonical Bot Chats unlock Hermes' built-in teammate roster/message_agent.
 # Initialize them after the server/gateway has had time to start. This is
 # idempotent and never blocks Railway health or Coordinator availability.
-(
-  sleep 75
-  python /app/scripts/bootstrap-hermes-team.py init-chats || true
-  sleep 5
-  python /app/scripts/bootstrap-hermes-team.py smoke-test || true
-) &
-echo "[team] Bot Chat initializer + native delegation smoke test scheduled" >&2
+if [ "${HERMES_ENABLE_HIERARCHY:-0}" = "1" ]; then
+  (
+    sleep 75
+    python /app/scripts/bootstrap-hermes-team.py init-chats || true
+    sleep 5
+    python /app/scripts/bootstrap-hermes-team.py smoke-test || true
+  ) &
+  echo "[team] Bot Chat initializer + native delegation smoke test scheduled" >&2
+else
+  echo "[team] native Hermes multiplexer only; deferred Bot Chat smoke test" >&2
+fi
 
 # Final certification / ongoing lightweight boot verification.
 # Runs in the background so health checks and Telegram startup are never blocked.
 # First boot performs full agent + learning + backup + Telegram tests.
 # Second boot proves the /data sentinel survived a real redeploy.
 # Later boots perform only the cheap static integrity check.
-(
-  sleep 12
-  set +e
-  mkdir -p /data/.hermes/logs
-  python /app/personalization/scripts/final_certify.py 2>&1 | tee -a /data/.hermes/logs/final-certification.log
-  cert_rc=${PIPESTATUS[0]}
-  echo "[certification] runner exited rc=${cert_rc}"
-  exit 0
-) &
+if [ "${HERMES_ENABLE_CERTIFICATION:-0}" = "1" ]; then
+  (
+    sleep 12
+    set +e
+    mkdir -p /data/.hermes/logs
+    python /app/personalization/scripts/final_certify.py 2>&1 | tee -a /data/.hermes/logs/final-certification.log
+    cert_rc=${PIPESTATUS[0]}
+    echo "[certification] runner exited rc=${cert_rc}"
+    exit 0
+  ) &
+else
+  echo "[certification] deferred for low-memory Telegram runtime"
+fi
 
 # Recover the personal Telegram DM owner while no Hermes long-poller is running.
 # This never creates Telegram forum topics and refuses to guess among multiple users.
