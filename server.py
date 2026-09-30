@@ -216,6 +216,8 @@ PAIRING_TTL = 3600
 # Native Hermes dashboard — runs on loopback, fronted by our reverse proxy.
 HERMES_DASHBOARD_HOST = "127.0.0.1"
 HERMES_DASHBOARD_PORT = int(os.environ.get("HERMES_DASHBOARD_PORT", "9119"))
+# Telegram-first production mode keeps the dashboard off unless explicitly enabled.
+DASHBOARD_ENABLED = os.environ.get("HERMES_ENABLE_DASHBOARD", "0").strip().lower() in {"1", "true", "yes", "on"}
 HERMES_DASHBOARD_URL = f"http://{HERMES_DASHBOARD_HOST}:{HERMES_DASHBOARD_PORT}"
 
 # Header hermes' own SPA uses to present its per-process session token
@@ -3056,9 +3058,13 @@ async def lifespan(app):
         _consolidate_pairing_dirs()
     except Exception as e:
         print(f"[pairing] consolidate at boot failed: {e!r}", flush=True)
-    # Dashboard runs always — it's the user-facing UI after setup is done,
-    # and it's independent of gateway state.
-    asyncio.create_task(dash.start())
+    # The Telegram-first Northflank profile does not need the native dashboard.
+    # Keeping it off avoids a second Python/Node process and leaves headroom in the
+    # 512 MB free-tier container. Set HERMES_ENABLE_DASHBOARD=1 when a UI is needed.
+    if DASHBOARD_ENABLED:
+        asyncio.create_task(dash.start())
+    else:
+        print("[dashboard] disabled for Telegram-first low-memory runtime", flush=True)
     await auto_start()
     recovery_task = asyncio.create_task(_gateway_recovery_watchdog())
     try:
@@ -3068,7 +3074,7 @@ async def lifespan(app):
         await asyncio.gather(
             recovery_task,
             gw.stop(),
-            dash.stop(),
+            dash.stop() if DASHBOARD_ENABLED else asyncio.sleep(0),
             return_exceptions=True,
         )
         global _http_client
