@@ -112,15 +112,15 @@ def existing_owner() -> str:
         config = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
     except Exception:
         config = {}
-    try:
-        telegram = config["gateway"]["platforms"]["telegram"]
+    for telegram in (
+        (config.get("platforms", {}) if isinstance(config, dict) else {}).get("telegram"),
+        (config.get("gateway", {}).get("platforms", {}) if isinstance(config, dict) and isinstance(config.get("gateway"), dict) else {}).get("telegram"),
+    ):
         home = telegram.get("home_channel") if isinstance(telegram, dict) else None
         chat_id = home.get("chat_id") if isinstance(home, dict) else None
         candidate = str(chat_id or "").strip()
         if candidate.isdigit() and int(candidate) > 0:
             return candidate
-    except (KeyError, TypeError, AttributeError):
-        pass
     return ""
 
 
