@@ -1914,7 +1914,10 @@ async def route_health(request: Request):
     # whisper.cpp, the wrapper, and both local models.
     configured = is_config_complete()
     gateway_ready = gw.state in {"running", "starting"}
-    voice_ready = os.path.exists("/tmp/hermes-voice-ready")
+    local_stt_enabled = os.getenv("HERMES_ENABLE_LOCAL_STT", "0").strip().lower() in {"1", "true", "yes", "on"}
+    # Free-tier text mode intentionally skips the local Whisper model; voice is
+    # opt-in and must not make Telegram text deployments report unhealthy.
+    voice_ready = (not local_stt_enabled) or os.path.exists("/tmp/hermes-voice-ready")
     healthy = (not configured) or (gateway_ready and voice_ready)
     return JSONResponse(
         {
