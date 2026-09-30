@@ -291,12 +291,13 @@ def ensure_config(home: Path, *, toolsets: list[str] | None = None, token_presen
         gateway = data.get("gateway")
         if not isinstance(gateway, dict):
             gateway = {}
-        gateway["multiplex_profiles"] = True
-        routes = topic_routes_from_env()
+        multiplex_enabled = os.getenv("HERMES_ENABLE_PROFILE_MULTIPLEX", "0").strip().lower() in {"1", "true", "yes", "on"}
+        gateway["multiplex_profiles"] = multiplex_enabled
+        routes = topic_routes_from_env() if multiplex_enabled else []
         if routes:
             gateway["profile_routes"] = routes
         else:
-            # Do not retain stale routes when the deployment no longer supplies IDs.
+            # Do not retain stale routes when multiplexing is disabled or IDs are absent.
             gateway.pop("profile_routes", None)
         data["gateway"] = gateway
     else:
