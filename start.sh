@@ -1,4 +1,5 @@
 # Northflank free-tier Telegram runtime: keep optional work gated by explicit flags.
+# Profile persistence is disk-backed; HERMES_ENABLE_PROFILE_MULTIPLEX=1 opt-in keeps the 512MB worker text-first.
 #!/bin/bash
 set -e
 
