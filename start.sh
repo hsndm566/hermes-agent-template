@@ -140,7 +140,7 @@ unset legacy_telegram_token
 # so gateway policy survives restarts and redeploys.
 sync_runtime_env_var() {
   local key="$1"
-  local value="${!key:-}"
+  local value="$(printenv "$key" 2>/dev/null || true)"
   [ -z "$value" ] && return 0
 
   local tmp
