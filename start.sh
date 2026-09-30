@@ -673,6 +673,42 @@ p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 print("[self-learning] memory=on skills=on background_review=on", flush=True)
 PY
 
+# Keep the always-on coordinator light enough for Northflank's 512 MB runtime.
+# Browser/computer toolsets and background review remain available as opt-in flags.
+python - <<'PY' || true
+import os
+from pathlib import Path
+import yaml
+p = Path("/data/.hermes/config.yaml")
+try:
+    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+except Exception:
+    data = {}
+if not isinstance(data, dict):
+    data = {}
+if os.getenv("HERMES_ENABLE_HEAVY_TOOLSETS", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+    pts = data.setdefault("platform_toolsets", {})
+    if not isinstance(pts, dict):
+        pts = {}
+        data["platform_toolsets"] = pts
+    lightweight = ["file", "web", "skills"]
+    pts["telegram"] = lightweight
+    pts["cli"] = lightweight
+    print("[memory-guard] coordinator toolsets reduced to file/web/skills", flush=True)
+if os.getenv("HERMES_ENABLE_BACKGROUND_REVIEW", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+    aux = data.setdefault("auxiliary", {})
+    if not isinstance(aux, dict):
+        aux = {}
+        data["auxiliary"] = aux
+    review = aux.setdefault("background_review", {})
+    if not isinstance(review, dict):
+        review = {}
+        aux["background_review"] = review
+    review["enabled"] = False
+    print("[memory-guard] background review disabled for free tier", flush=True)
+p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+PY
+
 # Configure GitHub's official remote MCP server. The bearer value itself stays
 # in Railway as MCP_GITHUB_API_KEY; config.yaml stores only an environment
 # reference, so Hermes can use authenticated GitHub tools without exposing the
