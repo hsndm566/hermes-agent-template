@@ -238,6 +238,16 @@ def persist_owner(uid: str, source: str) -> None:
         telegram = {}
         platforms["telegram"] = telegram
     telegram["enabled"] = True
+    # Keep the owner's private DM as Hermes' home channel across restarts.
+    # `/sethome` writes this gateway setting, but a fresh config bootstrap can
+    # recreate the Telegram block before the gateway starts. Reapply it only
+    # for the already-persisted single owner; never widen access to other users.
+    home = telegram.get("home_channel")
+    if not isinstance(home, dict) or str(home.get("chat_id") or "").strip() != uid:
+        telegram["home_channel"] = {
+            "platform": "telegram",
+            "chat_id": uid,
+        }
     extra = telegram.setdefault("extra", {})
     if not isinstance(extra, dict):
         extra = {}
