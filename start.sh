@@ -33,11 +33,15 @@ python -m py_compile "$VOICE_ADAPTER"
 grep -Fq '[Telegram] Pre-transcribed user voice' "$VOICE_ADAPTER"
 grep -Fq 'attempts = 3 if kind == "voice" else 1' "$VOICE_ADAPTER"
 command -v ffmpeg >/dev/null
-python -c 'import faster_whisper; from faster_whisper import WhisperModel'
-test -s /opt/faster-whisper-models/base/model.bin
-test -s /opt/faster-whisper-models/base/config.json
-touch "$VOICE_READY"
-echo "[voice-preflight] READY telegram_patch=on stt=faster-whisper model=base-baked cpu=int8 fallback=none"
+if [ "${HERMES_ENABLE_LOCAL_STT:-0}" = "1" ]; then
+  python -c 'import faster_whisper; from faster_whisper import WhisperModel'
+  test -s /opt/faster-whisper-models/base/model.bin
+  test -s /opt/faster-whisper-models/base/config.json
+  touch "$VOICE_READY"
+  echo "[voice-preflight] READY telegram_patch=on stt=faster-whisper model=base-baked cpu=int8 fallback=none"
+else
+  echo "[voice-preflight] local STT disabled for 512MB Telegram text runtime; set HERMES_ENABLE_LOCAL_STT=1 to enable voice"
+fi
 
 # Stamp the install method as "docker" so hermes treats this as an immutable
 # container image, not a pip checkout. hermes's detect_install_method() reads
@@ -271,8 +275,9 @@ if ollama_ready:
 stt = data.get("stt")
 if not isinstance(stt, dict):
     stt = {}
-stt["enabled"] = True
-stt["echo_transcripts"] = True
+local_stt_enabled = os.getenv("HERMES_ENABLE_LOCAL_STT", "0").strip().lower() in {"1", "true", "yes", "on"}
+stt["enabled"] = local_stt_enabled
+stt["echo_transcripts"] = local_stt_enabled
 stt["provider"] = "local"
 # Blank language lets faster-whisper auto-detect Arabic, English, and mixed notes.
 stt["language"] = ""
@@ -282,9 +287,8 @@ if not isinstance(local_stt, dict):
 local_stt["model"] = "/opt/faster-whisper-models/base"
 local_stt["device"] = "cpu"
 local_stt["compute_type"] = "int8"
-# Release model memory aggressively on the 1 GB Railway trial service. The
-# model is baked into the image, so reloading does not consume network or the
-# 500 MB persistent volume.
+# Release model memory aggressively on small containers. Voice is opt-in on
+# Northflank's 512 MB runtime so Telegram text has the full memory budget.
 local_stt["unload_after_idle_seconds"] = 60
 stt["local"] = local_stt
 data["stt"] = stt
@@ -343,7 +347,7 @@ print(
     f"main={main} aliases={','.join(sorted(aliases)) or 'none'} "
     f"fallbacks={len(fallbacks)} "
     f"vision={'gemma4:31b-cloud' if ollama_ready else 'default'} "
-    f"stt=local/faster-whisper-base-baked-cpu-int8",
+    f"stt={'local/faster-whisper-base-baked-cpu-int8' if local_stt_enabled else 'disabled-for-free-tier'},
     flush=True,
 )
 PY
