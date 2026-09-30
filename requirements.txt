@@ -9,3 +9,7 @@ httpx>=0.27.0
 # hermes's /api/pty, /api/ws, /api/events endpoints. httpx does not speak
 # WebSockets, so we need a dedicated client library.
 websockets>=12.0
+# The Dockerfile preloads the faster-whisper model and runs a direct import
+# preflight; install the runtime package explicitly because Hermes' voice extra
+# does not guarantee it is present in the system environment.
+faster-whisper>=1.1.0
