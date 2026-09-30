@@ -1,3 +1,4 @@
+# Northflank free-tier Telegram runtime: keep optional work gated by explicit flags.
 #!/bin/bash
 set -e
 
