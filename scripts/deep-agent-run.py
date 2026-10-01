@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import uuid
 from typing import Any
 
 from urllib.request import Request, urlopen
@@ -51,6 +50,17 @@ def post_json(url: str, headers: dict[str, str], payload: dict[str, Any], timeou
     request = Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
     with urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def notify_telegram(text: str) -> None:
+    token = env("TELEGRAM_BOT_TOKEN")
+    chat_id = env("TELEGRAM_OWNER_CHAT_ID")
+    post_json(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        {"Content-Type": "application/json"},
+        {"chat_id": chat_id, "text": text},
+        30,
+    )
 
 
 def rpc(name: str, payload: dict[str, Any]) -> Any:
@@ -125,7 +135,9 @@ def model_answer(goal: str) -> tuple[str, str]:
 
 
 def main() -> int:
-    goal = " ".join(sys.argv[1:]).strip()
+    notify = "--telegram" in sys.argv[1:]
+    args = [arg for arg in sys.argv[1:] if arg != "--telegram"]
+    goal = " ".join(args).strip()
     if not goal:
         raise SystemExit("usage: deep-agent-run.py <goal>")
     owner = env("MY_AGENT_CONTEXT_OWNER_ID")
@@ -141,13 +153,22 @@ def main() -> int:
         content, provider = model_answer(str(leased["goal"]))
         result = {"content": content, "provider": provider, "verified": True, "worker": "hermes-rest-boundary"}
         terminal = rpc("complete_agent_run", {"p_queue_msg_id": queue_msg_id, "p_run_id": run_id, "p_owner_id": owner, "p_status": "completed", "p_result": result, "p_secret": secret})
-        print(json.dumps({"run_id": run_id, "queue_msg_id": queue_msg_id, "status": terminal.get("status"), "provider": provider, "content": content}, ensure_ascii=False))
+        result = {"run_id": run_id, "queue_msg_id": queue_msg_id, "status": terminal.get("status"), "provider": provider, "content": content}
+        encoded = json.dumps(result, ensure_ascii=False)
+        if notify:
+            notify_telegram(encoded)
+        print(encoded)
         return 0
     except Exception as exc:
         try:
             rpc("complete_agent_run", {"p_queue_msg_id": queue_msg_id, "p_run_id": run_id, "p_owner_id": owner, "p_status": "failed", "p_result": {"error": type(exc).__name__}, "p_secret": secret})
         except Exception:
             pass
+        if notify:
+            try:
+                notify_telegram(json.dumps({"status": "failed", "run_id": run_id, "error": type(exc).__name__}))
+            except Exception:
+                pass
         raise
 
 
