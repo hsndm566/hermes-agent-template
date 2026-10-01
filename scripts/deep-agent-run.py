@@ -13,7 +13,7 @@ import sys
 import uuid
 from typing import Any
 
-import httpx
+from urllib.request import Request, urlopen
 
 
 def env(name: str, required: bool = True) -> str:
@@ -23,38 +23,41 @@ def env(name: str, required: bool = True) -> str:
     return value
 
 
+def post_json(url: str, headers: dict[str, str], payload: dict[str, Any], timeout: int) -> Any:
+    request = Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+    with urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
 def rpc(name: str, payload: dict[str, Any]) -> Any:
     base = env("MY_AGENT_CONTEXT_URL").rstrip("/")
     key = env("MY_AGENT_CONTEXT_PUBLISHABLE_KEY")
-    response = httpx.post(
+    return post_json(
         f"{base}/rest/v1/rpc/{name}",
-        headers={"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json=payload,
-        timeout=30,
+        {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        payload,
+        30,
     )
-    response.raise_for_status()
-    return response.json()
 
 
 def model_answer(goal: str) -> tuple[str, str]:
     model = os.getenv("DEEP_AGENT_MODEL", "gemma4:31b-cloud").strip()
     ollama_key = os.getenv("OLLAMA_API_KEY", "").strip()
     if ollama_key:
-        response = httpx.post(
+        data = post_json(
             os.getenv("DEEP_AGENT_OLLAMA_URL", "https://ollama.com/api/chat"),
-            headers={"Authorization": f"Bearer {ollama_key}"},
-            json={
+            {"Authorization": f"Bearer {ollama_key}", "Content-Type": "application/json"},
+            {
                 "model": model,
                 "stream": False,
+                "options": {"num_predict": 64},
                 "messages": [
                     {"role": "system", "content": "You are the durable Deep Agent worker. Plan briefly, execute the requested harmless task, and verify the result. Keep the final answer concise."},
                     {"role": "user", "content": goal},
                 ],
             },
-            timeout=120,
+            120,
         )
-        response.raise_for_status()
-        data = response.json()
         message = data.get("message") or {}
         content = message.get("content") if isinstance(message, dict) else None
         if not content:
@@ -63,27 +66,23 @@ def model_answer(goal: str) -> tuple[str, str]:
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
     if groq_key:
         groq_model = os.getenv("DEEP_AGENT_GROQ_MODEL", "openai/gpt-oss-20b").strip()
-        response = httpx.post(
+        data = post_json(
             os.getenv("DEEP_AGENT_GROQ_URL", "https://api.groq.com/openai/v1/chat/completions"),
-            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-            json={"model": groq_model, "messages": [{"role": "system", "content": "You are the durable Deep Agent worker. Verify the harmless task and answer concisely."}, {"role": "user", "content": goal}]},
-            timeout=120,
+            {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+            {"model": groq_model, "max_tokens": 64, "messages": [{"role": "system", "content": "You are the durable Deep Agent worker. Verify the harmless task and answer concisely."}, {"role": "user", "content": goal}]},
+            120,
         )
-        response.raise_for_status()
-        data = response.json()
         content = data["choices"][0]["message"]["content"]
         return str(content), f"groq/{data.get('model', groq_model)}"
     deepseek_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if deepseek_key:
         deepseek_model = os.getenv("DEEP_AGENT_DEEPSEEK_MODEL", "deepseek-chat").strip()
-        response = httpx.post(
+        data = post_json(
             os.getenv("DEEP_AGENT_DEEPSEEK_URL", "https://api.deepseek.com/chat/completions"),
-            headers={"Authorization": f"Bearer {deepseek_key}", "Content-Type": "application/json"},
-            json={"model": deepseek_model, "messages": [{"role": "system", "content": "You are the durable Deep Agent worker. Verify the harmless task and answer concisely."}, {"role": "user", "content": goal}]},
-            timeout=120,
+            {"Authorization": f"Bearer {deepseek_key}", "Content-Type": "application/json"},
+            {"model": deepseek_model, "max_tokens": 64, "messages": [{"role": "system", "content": "You are the durable Deep Agent worker. Verify the harmless task and answer concisely."}, {"role": "user", "content": goal}]},
+            120,
         )
-        response.raise_for_status()
-        data = response.json()
         content = data["choices"][0]["message"]["content"]
         return str(content), f"deepseek/{data.get('model', deepseek_model)}"
     openai_key = os.getenv("OPENAI_API_KEY", "").strip()
