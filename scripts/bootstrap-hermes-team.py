@@ -134,6 +134,19 @@ Handle technical architecture, software engineering, APIs, cloud infrastructure,
     },
 }
 
+# The free 512 MiB runtime cannot safely keep every optional specialist
+# bootstrap process resident.  Keep the full roster as the default for local
+# and larger deployments, while allowing Northflank to select the specialists
+# it needs without changing the delegation mechanism.
+_enabled_team = {
+    name.strip().lower()
+    for name in os.getenv("HERMES_TEAM_PROFILES", ",".join(sorted(TEAM_NAMES))).split(",")
+    if name.strip().lower() in TEAM_NAMES
+}
+if _enabled_team:
+    TEAM = {name: spec for name, spec in TEAM.items() if name in _enabled_team}
+    TEAM_NAMES = set(TEAM)
+
 COORDINATOR_BLOCK = """
 <!-- HERMES_MULTI_AGENT_COORDINATOR_V1 -->
 ## Multi-agent Coordinator role

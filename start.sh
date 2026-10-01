@@ -986,7 +986,7 @@ df -h /data >&2 || true
 # provides the org chart + IPC/shared state; actual agent execution stays on
 # Hermes' native Bot Mode because the third-party gateway's task executor is
 # incomplete in the pinned upstream implementation.
-if [ "${HERMES_ENABLE_HIERARCHY:-0}" = "1" ]; then
+if [ "${HERMES_ENABLE_HIERARCHY:-0}" = "1" ] && [ "${HERMES_ENABLE_TEAM_BOT_CHATS:-0}" = "1" ]; then
   if ! python /app/scripts/bootstrap-hermes-team.py sync-hierarchy; then
     echo "[hierarchy] sync incomplete; native Hermes team remains available" >&2
   fi
@@ -1006,7 +1006,7 @@ if [ "${HERMES_ENABLE_HIERARCHY:-0}" = "1" ]; then
   ) &
   echo "[team] Bot Chat initializer + native delegation smoke test scheduled" >&2
 else
-  echo "[team] native Hermes multiplexer only; deferred Bot Chat smoke test" >&2
+  echo "[team] Bot Chat bootstrap disabled for low-memory runtime; native Hermes multiplexer remains active" >&2
 fi
 
 # Final certification / ongoing lightweight boot verification.
