@@ -692,7 +692,11 @@ if os.getenv("HERMES_ENABLE_HEAVY_TOOLSETS", "0").strip().lower() not in {"1", "
     if not isinstance(pts, dict):
         pts = {}
         data["platform_toolsets"] = pts
-    lightweight = ["file", "web", "skills"]
+    # Keep the Telegram coordinator lean, but retain the terminal tool: the
+    # personal-cloud bridge and other local integration skills are executable
+    # workflows, not documentation-only prompts.  The terminal tool is the
+    # only supported way for Hermes to invoke those bounded scripts.
+    lightweight = ["file", "web", "skills", "terminal"]
     pts["telegram"] = lightweight
     pts["cli"] = lightweight
     print("[memory-guard] coordinator toolsets reduced to file/web/skills", flush=True)
