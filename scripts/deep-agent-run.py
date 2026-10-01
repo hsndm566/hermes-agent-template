@@ -60,6 +60,32 @@ def model_answer(goal: str) -> tuple[str, str]:
         if not content:
             raise RuntimeError("model returned no content")
         return str(content), f"ollama/{model}"
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    if groq_key:
+        groq_model = os.getenv("DEEP_AGENT_GROQ_MODEL", "openai/gpt-oss-20b").strip()
+        response = httpx.post(
+            os.getenv("DEEP_AGENT_GROQ_URL", "https://api.groq.com/openai/v1/chat/completions"),
+            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+            json={"model": groq_model, "messages": [{"role": "system", "content": "You are the durable Deep Agent worker. Verify the harmless task and answer concisely."}, {"role": "user", "content": goal}]},
+            timeout=120,
+        )
+        response.raise_for_status()
+        data = response.json()
+        content = data["choices"][0]["message"]["content"]
+        return str(content), f"groq/{data.get('model', groq_model)}"
+    deepseek_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    if deepseek_key:
+        deepseek_model = os.getenv("DEEP_AGENT_DEEPSEEK_MODEL", "deepseek-chat").strip()
+        response = httpx.post(
+            os.getenv("DEEP_AGENT_DEEPSEEK_URL", "https://api.deepseek.com/chat/completions"),
+            headers={"Authorization": f"Bearer {deepseek_key}", "Content-Type": "application/json"},
+            json={"model": deepseek_model, "messages": [{"role": "system", "content": "You are the durable Deep Agent worker. Verify the harmless task and answer concisely."}, {"role": "user", "content": goal}]},
+            timeout=120,
+        )
+        response.raise_for_status()
+        data = response.json()
+        content = data["choices"][0]["message"]["content"]
+        return str(content), f"deepseek/{data.get('model', deepseek_model)}"
     openai_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not openai_key:
         raise RuntimeError("no remote model credential is configured")
