@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Build Hermes' persistent MCP connector configuration from env references.
+
+Secrets are never written to config.yaml. The Hermes runtime resolves the
+``${ENV_NAME}`` references when it opens a connector. Connectors that require
+credentials are omitted until their credential is present, which keeps a
+partial deployment from repeatedly attempting unauthenticated connections.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from urllib.parse import urlencode
+
+import yaml
+
+
+HOME = Path(os.environ.get("HERMES_HOME", "/data/.hermes"))
+CONFIG = HOME / "config.yaml"
+
+
+def _load() -> dict:
+    try:
+        value = yaml.safe_load(CONFIG.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        value = {}
+    return value if isinstance(value, dict) else {}
+
+
+def _headers(existing: object, env_name: str) -> dict[str, str]:
+    result = dict(existing) if isinstance(existing, dict) else {}
+    result["Authorization"] = f"Bearer ${{{env_name}}}"
+    return result
+
+
+def configure() -> list[str]:
+    data = _load()
+    servers = data.setdefault("mcp_servers", {})
+    if not isinstance(servers, dict):
+        servers = {}
+        data["mcp_servers"] = servers
+
+    configured: list[str] = []
+
+    # GitHub's hosted server supports both OAuth and PAT auth. Northflank uses
+    # a secret reference; GITHUB_TOKEN is promoted to this name in start.sh.
+    github_key = os.getenv("MCP_GITHUB_API_KEY")
+    if github_key:
+        existing = servers.get("github") if isinstance(servers.get("github"), dict) else {}
+        servers["github"] = {
+            **existing,
+            "url": "https://api.githubcopilot.com/mcp/",
+            "headers": _headers(existing.get("headers"), "MCP_GITHUB_API_KEY"),
+            "enabled": True,
+        }
+        configured.append("github")
+    else:
+        servers.pop("github", None)
+
+    # Supabase's hosted MCP endpoint is scoped to one project. Do not fall
+    # back to an unscoped URL: that would grant access to every project.
+    supabase_token = os.getenv("SUPABASE_ACCESS_TOKEN")
+    project_ref = os.getenv("SUPABASE_PROJECT_REF")
+    if supabase_token and project_ref:
+        features = os.getenv(
+            "SUPABASE_MCP_FEATURES",
+            "docs,account,database,debugging,development,functions,branching",
+        )
+        query = urlencode({"project_ref": project_ref, "features": features})
+        existing = servers.get("supabase") if isinstance(servers.get("supabase"), dict) else {}
+        servers["supabase"] = {
+            **existing,
+            "url": f"https://mcp.supabase.com/mcp?{query}",
+            "headers": _headers(existing.get("headers"), "SUPABASE_ACCESS_TOKEN"),
+            "enabled": True,
+        }
+        configured.append("supabase")
+    else:
+        servers.pop("supabase", None)
+
+    # Clerk's official server provides current SDK and MCP implementation
+    # guidance and intentionally needs no secret.
+    servers["clerk"] = {
+        "url": "https://mcp.clerk.com/mcp",
+        "enabled": True,
+    }
+    configured.append("clerk")
+
+    # Google Workspace and other private MCP servers can be supplied by the
+    # owner without changing the image. The token remains an env reference.
+    workspace_url = os.getenv("GOOGLE_WORKSPACE_MCP_URL")
+    if workspace_url:
+        entry = {"url": workspace_url, "enabled": True}
+        if os.getenv("GOOGLE_WORKSPACE_MCP_TOKEN"):
+            entry["headers"] = {"Authorization": "Bearer ${GOOGLE_WORKSPACE_MCP_TOKEN}"}
+        servers["google-workspace"] = entry
+        configured.append("google-workspace")
+    else:
+        servers.pop("google-workspace", None)
+
+    # Google's first-party Workspace MCP servers use OAuth. Enabling this flag
+    # makes Hermes expose the endpoints in its dashboard so the owner can
+    # authorize them once; no Google refresh token is stored in this image.
+    if os.getenv("GOOGLE_WORKSPACE_MCP_ENABLED", "0").lower() in {"1", "true", "yes", "on"}:
+        google_endpoints = {
+            "gmail": "https://gmailmcp.googleapis.com/mcp/v1",
+            "google-drive": "https://drivemcp.googleapis.com/mcp/v1",
+            "google-calendar": "https://calendar-mcp.googleapis.com/mcp/v1",
+            "google-contacts": "https://peoplemcp.googleapis.com/mcp/v1",
+        }
+        for name, url in google_endpoints.items():
+            servers[name] = {"url": url, "enabled": True}
+            configured.append(name)
+    else:
+        for name in ("gmail", "google-drive", "google-calendar", "google-contacts"):
+            servers.pop(name, None)
+
+    # Heroku now provides an official OAuth-protected remote MCP endpoint. An
+    # API key can be used for non-interactive service deployments; otherwise
+    # the owner can enable it and complete OAuth from Hermes' dashboard.
+    if os.getenv("HEROKU_API_KEY") or os.getenv("HEROKU_MCP_ENABLED", "0").lower() in {"1", "true", "yes", "on"}:
+        entry = {"url": "https://mcp.heroku.com/mcp", "enabled": True}
+        if os.getenv("HEROKU_API_KEY"):
+            entry["headers"] = {"Authorization": "Bearer ${HEROKU_API_KEY}"}
+        servers["heroku"] = entry
+        configured.append("heroku")
+    else:
+        servers.pop("heroku", None)
+
+    # These providers have APIs but no official hosted MCP endpoint. Keep a
+    # declarative inventory for the platform-connectors skill; it contains only
+    # endpoint names and env variable names, never credentials.
+    data["platform_connectors"] = {
+        "northflank": {
+            "base_url": "https://api.northflank.com/v1",
+            "token_env": "NORTHFLANK_API_TOKEN",
+        },
+        "heroku": {
+            "base_url": "https://api.heroku.com",
+            "token_env": "HEROKU_API_KEY",
+        },
+        "clerk_api": {
+            "base_url": "https://api.clerk.com/v1",
+            "token_env": "CLERK_SECRET_KEY",
+        },
+    }
+
+    CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    return configured
+
+
+if __name__ == "__main__":
+    print("[connectors] configured=" + ",".join(configure()), flush=True)

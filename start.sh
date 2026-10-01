@@ -160,6 +160,28 @@ sync_runtime_env_var TELEGRAM_BOT_TOKEN
 sync_runtime_env_var TELEGRAM_ALLOW_ALL_USERS
 sync_runtime_env_var TELEGRAM_ALLOWED_USERS
 sync_runtime_env_var GATEWAY_ALLOW_ALL_USERS
+# Connector credentials are copied only into Hermes' private runtime env file;
+# their values are never written to config.yaml or printed. This deployment is
+# Northflank-only; no Railway variables are read.
+sync_runtime_env_var MCP_GITHUB_API_KEY
+sync_runtime_env_var GITHUB_TOKEN
+sync_runtime_env_var SUPABASE_ACCESS_TOKEN
+sync_runtime_env_var SUPABASE_PROJECT_REF
+sync_runtime_env_var SUPABASE_MCP_FEATURES
+sync_runtime_env_var NORTHFLANK_API_TOKEN
+sync_runtime_env_var HEROKU_API_KEY
+sync_runtime_env_var CLERK_SECRET_KEY
+sync_runtime_env_var GOOGLE_WORKSPACE_MCP_URL
+sync_runtime_env_var GOOGLE_WORKSPACE_MCP_TOKEN
+sync_runtime_env_var GOOGLE_WORKSPACE_MCP_ENABLED
+sync_runtime_env_var HEROKU_MCP_ENABLED
+
+# Let the official GitHub MCP server use the existing GitHub API token without
+# duplicating the secret in Northflank. The alias is process-local and is only
+# persisted through the same secret-safe runtime-env helper above.
+if [ -z "${MCP_GITHUB_API_KEY:-}" ] && [ -n "${GITHUB_TOKEN:-}" ]; then
+  export MCP_GITHUB_API_KEY="$GITHUB_TOKEN"
+fi
 
 # Multi-provider model stack.
 # Priority: Ollama Cloud Gemma 4 main -> Groq GPT-OSS 120B -> DeepSeek V4 Pro
@@ -714,43 +736,9 @@ if os.getenv("HERMES_ENABLE_BACKGROUND_REVIEW", "0").strip().lower() not in {"1"
 p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 PY
 
-# Configure GitHub's official remote MCP server. The bearer value itself stays
-# in Railway as MCP_GITHUB_API_KEY; config.yaml stores only an environment
-# reference, so Hermes can use authenticated GitHub tools without exposing the
-# raw credential to Telegram or terminal commands.
-python - <<'PY' || true
-from pathlib import Path
-import yaml
-
-p = Path("/data/.hermes/config.yaml")
-try:
-    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-except Exception:
-    data = {}
-if not isinstance(data, dict):
-    data = {}
-
-servers = data.setdefault("mcp_servers", {})
-if not isinstance(servers, dict):
-    servers = {}
-    data["mcp_servers"] = servers
-
-existing = servers.get("github")
-if not isinstance(existing, dict):
-    existing = {}
-servers["github"] = {
-    **existing,
-    "url": "https://api.githubcopilot.com/mcp/",
-    "headers": {
-        **(existing.get("headers") if isinstance(existing.get("headers"), dict) else {}),
-        "Authorization": "Bearer ${MCP_GITHUB_API_KEY}",
-    },
-    "enabled": True,
-}
-
-p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-print("[github-mcp] configured official remote GitHub MCP server", flush=True)
-PY
+# Configure only the connectors that are actually credentialed. The script
+# preserves unrelated user config and writes env references, never raw secrets.
+python /app/scripts/configure-connectors.py || true
 
 # Keep reproducible vendor/official skills OUT of the tiny persistent volume.
 # These sources already exist in the immutable image; symlinks make them available
