@@ -10,19 +10,19 @@ automatically portable to Northflank.
 
 | Rank | Canonical service | Aliases grouped here | Portability | Hermes state |
 | ---: | --- | --- | --- | --- |
-| 1 | Gmail / Google Workspace | Gmail, Drive, Docs, Sheets, Calendar, Contacts | Remote MCP + OAuth | Endpoint support added; enable Google OAuth once |
-| 2 | GitHub | GitHub Actions, GitHub MCP | Official remote MCP + PAT/OAuth | Secret-backed endpoint added |
-| 3 | Notion | Notion MCP | Official remote MCP / connector | Add `NOTION_MCP_URL` and authorize it | 
+| 1 | Gmail / Google Workspace | Gmail, Drive, Docs, Sheets, Calendar, Contacts | Remote MCP + OAuth | Free OAuth endpoint configured; authorize once |
+| 2 | GitHub | GitHub Actions, GitHub MCP | Official remote MCP + PAT/OAuth | Free OAuth endpoint configured; PAT is optional |
+| 3 | Notion | Notion MCP | Official remote MCP / connector | Free OAuth endpoint configured; authorize once |
 
 ## Tier 2 — weekly
 
 | Rank | Canonical service | Aliases grouped here | Portability | Hermes state |
 | ---: | --- | --- | --- | --- |
-| 4 | Supabase | Supabase MCP, database, Edge Functions | Official remote MCP | Project-scoped endpoint added |
-| 5 | Cloudflare | Cloudflare MCP | Remote MCP / connector | Add the account's `CLOUDFLARE_MCP_URL` and scoped token |
-| 6 | Heroku | Heroku MCP, Heroku API | Official remote MCP + OAuth | Endpoint added; enable OAuth or provide a scoped token |
+| 4 | Supabase | Supabase MCP, database, Edge Functions | Official remote MCP | Free project-scoped OAuth endpoint configured |
+| 5 | Cloudflare | Cloudflare MCP | Remote MCP / connector | Free OAuth endpoint configured; authorize once |
+| 6 | Heroku | Heroku MCP, Heroku API | Official remote MCP + OAuth | Free OAuth endpoint configured; token is optional |
 | 7 | Resend | Email delivery | API/MCP connector | Add `RESEND_MCP_URL` and a scoped API key |
-| 8 | Vercel | Deployments | Official remote MCP + OAuth | Enable `VERCEL_MCP_ENABLED` to authorize `mcp.vercel.com` |
+| 8 | Vercel | Deployments | Official remote MCP + OAuth | Free OAuth endpoint configured; authorize once |
 | 9 | OpenRouter | Model routing | API provider | Already represented by Hermes provider settings |
 
 ## Tier 3 — monthly
@@ -38,9 +38,10 @@ automatically portable to Northflank.
 
 ## Deferred
 
-Cloudflare, Resend, Notion, n8n, and Northflank still need a selected account
-plus a scoped credential or OAuth grant before they can be enabled in the
-Northflank runtime. Vercel is opt-in and uses its official OAuth endpoint.
+Resend, n8n, and Northflank still need a selected account plus a scoped
+credential or self-hosted/free endpoint before they can be enabled in the
+Northflank runtime. The official OAuth endpoints above do not require a paid
+plan, but each account still requires one interactive authorization.
 The rare/researched list (TinyFish, Exa, Semrush,
 video tools, job tools, and duplicate WhatsApp transports) is intentionally
 excluded from the runtime catalog until a real workflow needs it.

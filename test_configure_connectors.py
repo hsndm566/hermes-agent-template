@@ -63,3 +63,37 @@ def test_uncredentialed_servers_are_removed(tmp_path, monkeypatch):
     assert "supabase" not in servers
     assert "heroku" not in servers
     assert servers["clerk"]["url"] == "https://mcp.clerk.com/mcp"
+
+
+def test_free_oauth_endpoints_are_opt_in_and_secret_free(tmp_path, monkeypatch):
+    module = _module()
+    config = tmp_path / "config.yaml"
+    config.write_text("mcp_servers: {}\n", encoding="utf-8")
+    monkeypatch.setattr(module, "CONFIG", config)
+    for key in (
+        "MCP_GITHUB_API_KEY",
+        "SUPABASE_ACCESS_TOKEN",
+        "NOTION_MCP_URL",
+        "CLOUDFLARE_MCP_URL",
+        "HEROKU_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("MCP_GITHUB_MCP_ENABLED", "1")
+    monkeypatch.setenv("SUPABASE_MCP_ENABLED", "1")
+    monkeypatch.setenv("SUPABASE_PROJECT_REF", "ufyvelnxexjvlibhweau")
+    monkeypatch.setenv("NOTION_MCP_ENABLED", "1")
+    monkeypatch.setenv("CLOUDFLARE_MCP_ENABLED", "1")
+    monkeypatch.setenv("VERCEL_MCP_ENABLED", "1")
+
+    configured = module.configure()
+    result = yaml.safe_load(config.read_text(encoding="utf-8"))
+    servers = result["mcp_servers"]
+
+    assert {"github", "supabase", "notion", "cloudflare", "vercel"}.issubset(configured)
+    assert servers["github"]["url"] == "https://api.githubcopilot.com/mcp/"
+    assert servers["supabase"]["url"].startswith("https://mcp.supabase.com/mcp?project_ref=")
+    assert servers["notion"]["url"] == "https://mcp.notion.com/mcp"
+    assert servers["cloudflare"]["url"] == "https://mcp.cloudflare.com/mcp?codemode=false"
+    assert servers["vercel"]["url"] == "https://mcp.vercel.com"
+    assert "Authorization" not in servers["github"]
+    assert "Authorization" not in servers["supabase"]
