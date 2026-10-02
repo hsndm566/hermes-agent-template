@@ -66,14 +66,17 @@ def configure() -> list[str]:
     # GitHub's hosted server supports both OAuth and PAT auth. Northflank uses
     # a secret reference; GITHUB_TOKEN is promoted to this name in start.sh.
     github_key = os.getenv("MCP_GITHUB_API_KEY")
-    if github_key:
+    github_oauth = os.getenv("MCP_GITHUB_MCP_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
+    if github_key or github_oauth:
         existing = servers.get("github") if isinstance(servers.get("github"), dict) else {}
-        servers["github"] = {
+        entry = {
             **existing,
             "url": "https://api.githubcopilot.com/mcp/",
-            "headers": _headers(existing.get("headers"), "MCP_GITHUB_API_KEY"),
             "enabled": True,
         }
+        if github_key:
+            entry["headers"] = _headers(existing.get("headers"), "MCP_GITHUB_API_KEY")
+        servers["github"] = entry
         configured.append("github")
     else:
         servers.pop("github", None)
@@ -82,19 +85,22 @@ def configure() -> list[str]:
     # back to an unscoped URL: that would grant access to every project.
     supabase_token = os.getenv("SUPABASE_ACCESS_TOKEN")
     project_ref = os.getenv("SUPABASE_PROJECT_REF")
-    if supabase_token and project_ref:
+    supabase_oauth = os.getenv("SUPABASE_MCP_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
+    if project_ref and (supabase_token or supabase_oauth):
         features = os.getenv(
             "SUPABASE_MCP_FEATURES",
             "docs,account,database,debugging,development,functions,branching",
         )
         query = urlencode({"project_ref": project_ref, "features": features})
         existing = servers.get("supabase") if isinstance(servers.get("supabase"), dict) else {}
-        servers["supabase"] = {
+        entry = {
             **existing,
             "url": f"https://mcp.supabase.com/mcp?{query}",
-            "headers": _headers(existing.get("headers"), "SUPABASE_ACCESS_TOKEN"),
             "enabled": True,
         }
+        if supabase_token:
+            entry["headers"] = _headers(existing.get("headers"), "SUPABASE_ACCESS_TOKEN")
+        servers["supabase"] = entry
         configured.append("supabase")
     else:
         servers.pop("supabase", None)
@@ -160,6 +166,17 @@ def configure() -> list[str]:
         ("n8n", "N8N_MCP_URL", "N8N_API_KEY"),
     ):
         _optional_server(servers, configured, name=name, url_env=url_env, token_env=token_env)
+
+    # Official OAuth endpoints can be advertised without a token. The owner
+    # still authorizes them from Hermes before private data is available.
+    oauth_endpoints = {
+        "notion": ("https://mcp.notion.com/mcp", "NOTION_MCP_ENABLED"),
+        "cloudflare": ("https://mcp.cloudflare.com/mcp?codemode=false", "CLOUDFLARE_MCP_ENABLED"),
+    }
+    for name, (url, flag) in oauth_endpoints.items():
+        if os.getenv(flag, "0").lower() in {"1", "true", "yes", "on"} and name not in servers:
+            servers[name] = {"url": url, "enabled": True}
+            configured.append(name)
 
     # Vercel publishes an official OAuth-protected remote MCP server. It is
     # opt-in because authorization is interactive and account-scoped.
