@@ -12,17 +12,17 @@ automatically portable to Northflank.
 | ---: | --- | --- | --- | --- |
 | 1 | Gmail / Google Workspace | Gmail, Drive, Docs, Sheets, Calendar, Contacts | Remote MCP + OAuth | Endpoint support added; enable Google OAuth once |
 | 2 | GitHub | GitHub Actions, GitHub MCP | Official remote MCP + PAT/OAuth | Secret-backed endpoint added |
-| 3 | Notion | Notion MCP | Official remote MCP / connector | Use the existing Notion connector or add a private MCP URL |
+| 3 | Notion | Notion MCP | Official remote MCP / connector | Add `NOTION_MCP_URL` and authorize it | 
 
 ## Tier 2 — weekly
 
 | Rank | Canonical service | Aliases grouped here | Portability | Hermes state |
 | ---: | --- | --- | --- | --- |
 | 4 | Supabase | Supabase MCP, database, Edge Functions | Official remote MCP | Project-scoped endpoint added |
-| 5 | Cloudflare | Cloudflare MCP | Remote MCP / connector | Configure separately when the target account is selected |
+| 5 | Cloudflare | Cloudflare MCP | Remote MCP / connector | Add the account's `CLOUDFLARE_MCP_URL` and scoped token |
 | 6 | Heroku | Heroku MCP, Heroku API | Official remote MCP + OAuth | Endpoint added; enable OAuth or provide a scoped token |
-| 7 | Resend | Email delivery | API/MCP connector | Keep as a separate scoped connector |
-| 8 | Vercel | Deployments | API/MCP connector | Keep as a separate scoped connector |
+| 7 | Resend | Email delivery | API/MCP connector | Add `RESEND_MCP_URL` and a scoped API key |
+| 8 | Vercel | Deployments | Official remote MCP + OAuth | Enable `VERCEL_MCP_ENABLED` to authorize `mcp.vercel.com` |
 | 9 | OpenRouter | Model routing | API provider | Already represented by Hermes provider settings |
 
 ## Tier 3 — monthly
@@ -31,16 +31,17 @@ automatically portable to Northflank.
 | ---: | --- | --- | --- | --- |
 | 10 | Clerk | Clerk MCP, Clerk API, BetterAuth | Official remote MCP for SDK guidance; API for account data | Public MCP endpoint added; API token is optional |
 | 11 | Northflank | Northflank API, deployment control | REST API | Secret-backed inventory added; no fabricated MCP endpoint |
-| 12 | Firecrawl | Crawl4AI, Apify, Scrapyfy | MCP/API | Keep one web extraction backend selected at a time |
-| 13 | Playwright | Playwright MCP, WhatsApp Web | MCP | Use only for explicit browser tasks |
-| 14 | n8n | workflow automation | MCP/API | Add only when a concrete workflow endpoint exists |
+| 12 | Firecrawl | Crawl4AI, Apify, Scrapyfy | MCP/API | Add `FIRECRAWL_MCP_URL`; keep one extraction backend selected |
+| 13 | Playwright | Playwright MCP, WhatsApp Web | MCP | Add a private `PLAYWRIGHT_MCP_URL` for browser tasks |
+| 14 | n8n | workflow automation | MCP/API | Add the workspace `N8N_MCP_URL` when available |
 | 15 | Telegram | WhatsApp, WhatsApp Business, Evolution API, Chatwoot | Native channel/API | Telegram is Hermes' authenticated owner channel |
 
 ## Deferred
 
-Cloudflare, Resend, Vercel, Notion, n8n, and Northflank still need a selected
-account plus a scoped credential or OAuth grant before they can be enabled in
-the Northflank runtime. The rare/researched list (TinyFish, Exa, Semrush,
+Cloudflare, Resend, Notion, n8n, and Northflank still need a selected account
+plus a scoped credential or OAuth grant before they can be enabled in the
+Northflank runtime. Vercel is opt-in and uses its official OAuth endpoint.
+The rare/researched list (TinyFish, Exa, Semrush,
 video tools, job tools, and duplicate WhatsApp transports) is intentionally
 excluded from the runtime catalog until a real workflow needs it.
 

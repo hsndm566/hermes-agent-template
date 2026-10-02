@@ -34,6 +34,26 @@ def _headers(existing: object, env_name: str) -> dict[str, str]:
     return result
 
 
+def _optional_server(
+    servers: dict,
+    configured: list[str],
+    *,
+    name: str,
+    url_env: str,
+    token_env: str | None = None,
+) -> None:
+    """Register an owner-supplied MCP endpoint without inventing its URL."""
+    url = os.getenv(url_env)
+    if not url:
+        servers.pop(name, None)
+        return
+    entry: dict[str, object] = {"url": url, "enabled": True}
+    if token_env and os.getenv(token_env):
+        entry["headers"] = _headers(None, token_env)
+    servers[name] = entry
+    configured.append(name)
+
+
 def configure() -> list[str]:
     data = _load()
     servers = data.setdefault("mcp_servers", {})
@@ -128,6 +148,27 @@ def configure() -> list[str]:
     else:
         servers.pop("heroku", None)
 
+    # These services expose either a user-specific MCP endpoint or a local /
+    # self-hosted server. The URL is deliberately supplied by the owner so a
+    # typo or third-party endpoint cannot be silently trusted by the image.
+    for name, url_env, token_env in (
+        ("notion", "NOTION_MCP_URL", "NOTION_MCP_TOKEN"),
+        ("cloudflare", "CLOUDFLARE_MCP_URL", "CLOUDFLARE_API_TOKEN"),
+        ("resend", "RESEND_MCP_URL", "RESEND_API_KEY"),
+        ("firecrawl", "FIRECRAWL_MCP_URL", "FIRECRAWL_API_KEY"),
+        ("playwright", "PLAYWRIGHT_MCP_URL", None),
+        ("n8n", "N8N_MCP_URL", "N8N_API_KEY"),
+    ):
+        _optional_server(servers, configured, name=name, url_env=url_env, token_env=token_env)
+
+    # Vercel publishes an official OAuth-protected remote MCP server. It is
+    # opt-in because authorization is interactive and account-scoped.
+    if os.getenv("VERCEL_MCP_ENABLED", "0").lower() in {"1", "true", "yes", "on"}:
+        servers["vercel"] = {"url": "https://mcp.vercel.com", "enabled": True}
+        configured.append("vercel")
+    else:
+        servers.pop("vercel", None)
+
     # These providers have APIs but no official hosted MCP endpoint. Keep a
     # declarative inventory for the platform-connectors skill; it contains only
     # endpoint names and env variable names, never credentials.
@@ -143,6 +184,23 @@ def configure() -> list[str]:
         "clerk_api": {
             "base_url": "https://api.clerk.com/v1",
             "token_env": "CLERK_SECRET_KEY",
+        },
+        "github": {
+            "base_url": "https://api.github.com",
+            "token_env": "MCP_GITHUB_API_KEY",
+        },
+        "supabase": {
+            "base_url": "https://mcp.supabase.com/mcp",
+            "token_env": "SUPABASE_ACCESS_TOKEN",
+            "project_ref_env": "SUPABASE_PROJECT_REF",
+        },
+        "vercel": {
+            "base_url": "https://mcp.vercel.com",
+            "auth": "oauth",
+        },
+        "google_workspace": {
+            "auth": "oauth",
+            "endpoints": ["gmail", "drive", "calendar", "contacts"],
         },
     }
 
