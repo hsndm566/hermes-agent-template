@@ -695,8 +695,16 @@ def hermes_dashboard_auth_secret() -> str:
 
 
 def hermes_dashboard_public_url() -> str:
-    """Public origin hermes should build OAuth redirect_uris from, or ""."""
-    domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip()
+    """Public origin Hermes should use for MCP OAuth callbacks.
+
+    Northflank owns the live deployment.  Keep the origin explicit so OAuth
+    providers never receive a loopback redirect and no hosting vendor's
+    legacy variable is required.
+    """
+    explicit = os.environ.get("HERMES_PUBLIC_URL", "").strip().rstrip("/")
+    if explicit:
+        return explicit if explicit.startswith("http") else f"https://{explicit}"
+    domain = os.environ.get("NORTHFLANK_PUBLIC_DOMAIN", "").strip().strip("/")
     return f"https://{domain}" if domain else ""
 
 
@@ -1716,7 +1724,7 @@ class Dashboard:
                       f"this proxy signs in for you, so no second login should appear",
                       flush=True)
             else:
-                print("[dashboard] auth gate OFF — no RAILWAY_PUBLIC_DOMAIN, so hermes "
+                print("[dashboard] auth gate OFF — no HERMES_PUBLIC_URL/NORTHFLANK_PUBLIC_DOMAIN, so Hermes "
                       "builds MCP OAuth redirects from the loopback address and those "
                       "sign-ins will not complete", flush=True)
             self._drain_task = asyncio.create_task(self._drain())
