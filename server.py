@@ -1924,12 +1924,10 @@ async def page_index(request: Request):
     return templates.TemplateResponse(request, "index.html")
 
 
-# Northflank runtime diagnostics are intentionally public but secret-free.\nasync def route_health(request: Request):
-    # This endpoint is intentionally secret-free. Northflank probes it for
-    # wrapper liveness, while the JSON reports whether the Telegram-first agent
-    # can actually accept work rather than merely whether the supervisor exists.
-    # wrapper process exists.  Northflank can otherwise stay green while Hermes
-    # is paused, unpaired, or missing the provider/token needed to answer.
+# Northflank runtime diagnostics are intentionally public but secret-free.
+async def route_health(request: Request):
+    # Northflank probes this endpoint for wrapper liveness, while the JSON
+    # reports whether the Telegram-first agent can actually accept work.
     data = read_env(ENV_FILE)
     configured = is_config_complete(data)
     model_ready = bool(data.get("LLM_MODEL"))
