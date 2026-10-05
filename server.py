@@ -1925,8 +1925,9 @@ async def page_index(request: Request):
 
 
 async def route_health(request: Request):
-    # This endpoint is intentionally secret-free but must reflect whether the
-    # Telegram-first agent can actually accept work, not merely whether the
+    # This endpoint is intentionally secret-free. Northflank probes it for
+    # wrapper liveness, while the JSON reports whether the Telegram-first agent
+    # can actually accept work rather than merely whether the supervisor exists.
     # wrapper process exists.  Northflank can otherwise stay green while Hermes
     # is paused, unpaired, or missing the provider/token needed to answer.
     data = read_env(ENV_FILE)
