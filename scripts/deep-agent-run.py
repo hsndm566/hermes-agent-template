@@ -122,14 +122,12 @@ def model_answer(goal: str) -> tuple[str, str]:
     openai_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not openai_key:
         raise RuntimeError("no remote model credential is configured")
-    response = httpx.post(
+    data = post_json(
         os.getenv("DEEP_AGENT_OPENAI_URL", "https://api.openai.com/v1/chat/completions"),
-        headers={"Authorization": f"Bearer {openai_key}"},
-        json={"model": os.getenv("DEEP_AGENT_OPENAI_MODEL", "gpt-4o-mini"), "messages": [{"role": "system", "content": "You are the durable Deep Agent worker. Verify the harmless task and answer concisely."}, {"role": "user", "content": goal}]},
-        timeout=120,
+        {"Authorization": f"Bearer {openai_key}", "Content-Type": "application/json"},
+        {"model": os.getenv("DEEP_AGENT_OPENAI_MODEL", "gpt-4o-mini"), "max_tokens": 64, "messages": [{"role": "system", "content": "You are the durable Deep Agent worker. Verify the harmless task and answer concisely."}, {"role": "user", "content": goal}]},
+        120,
     )
-    response.raise_for_status()
-    data = response.json()
     content = data["choices"][0]["message"]["content"]
     return str(content), f"openai/{data.get('model', os.getenv('DEEP_AGENT_OPENAI_MODEL', 'gpt-4o-mini'))}"
 
