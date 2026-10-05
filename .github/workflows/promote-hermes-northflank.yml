@@ -1,26 +1,29 @@
-name: Promote Hermes Northflank recovery
+name: Promote Hermes Northflank
 
 on:
   push:
     branches: [main]
-    paths:
-      - ".github/workflows/promote-hermes-northflank.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: promote-hermes-northflank
+  cancel-in-progress: true
+
 jobs:
   promote:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       NF_TOKEN: ${{ secrets.NORTHFLANK_API_TOKEN || secrets.NORTHFLANK_API_KEY }}
       NF_TEAM: hsndms-team
       NF_PROJECT: adam
       NF_SERVICE: personal-cloud-agent-api
-      NF_BUILD_ID: classy-robin-9791
-      NF_SHA: b4915124696d1b8d5ba63ed78666c0ca10fceb7d
+      NF_SHA: ${{ github.sha }}
+      HERMES_HEALTH_URL: https://p01--personal-cloud-agent-api--ds968wvrhzcj.code.run/health
+
     steps:
       - name: Require existing Northflank credential
         shell: bash
@@ -31,17 +34,41 @@ jobs:
             exit 1
           fi
 
+      - name: Find or start exact Northflank build
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://api.northflank.com/v1/teams/$NF_TEAM/projects/$NF_PROJECT/services/$NF_SERVICE"
+          list="$(curl --fail-with-body --silent --show-error             -H "Authorization: Bearer $NF_TOKEN"             "$base/build?per_page=100")"
+
+          build_id="$(printf '%s' "$list" | jq -r --arg sha "$NF_SHA"             '[.data.builds[] | select(.sha == $sha)][0].id // empty')"
+
+          if [ -z "$build_id" ]; then
+            echo "No build exists for $NF_SHA; starting one."
+            started="$(curl --fail-with-body --silent --show-error               -X POST               -H "Authorization: Bearer $NF_TOKEN"               -H "Content-Type: application/json"               --data "$(jq -nc --arg sha "$NF_SHA" '{sha:$sha}')"               "$base/build")"
+            build_id="$(printf '%s' "$started" | jq -r '.data.id // empty')"
+          else
+            echo "Reusing existing build $build_id for $NF_SHA."
+          fi
+
+          if [ -z "$build_id" ]; then
+            echo "Northflank did not return a build id."
+            exit 1
+          fi
+          echo "NF_BUILD_ID=$build_id" >> "$GITHUB_ENV"
+
       - name: Wait for exact Northflank build
         shell: bash
         run: |
           set -euo pipefail
           api="https://api.northflank.com/v1/teams/$NF_TEAM/projects/$NF_PROJECT/services/$NF_SERVICE/build/$NF_BUILD_ID"
-          for attempt in $(seq 1 60); do
+          for attempt in $(seq 1 90); do
             body="$(curl --fail-with-body --silent --show-error               -H "Authorization: Bearer $NF_TOKEN"               "$api")"
             status="$(printf '%s' "$body" | jq -r '.data.status // empty')"
             sha="$(printf '%s' "$body" | jq -r '.data.sha // empty')"
-            echo "Northflank build status: ${status:-unknown}"
-            if [ "$sha" != "$NF_SHA" ] && [ -n "$sha" ]; then
+            echo "Northflank build $NF_BUILD_ID: ${status:-unknown} sha=${sha:-unknown}"
+
+            if [ -n "$sha" ] && [ "$sha" != "$NF_SHA" ]; then
               echo "Build SHA mismatch; refusing to deploy."
               exit 1
             fi
@@ -59,26 +86,28 @@ jobs:
           echo "Timed out waiting for Northflank build."
           exit 1
 
-      - name: Promote exact recovery image
+      - name: Promote exact image
         shell: bash
         run: |
           set -euo pipefail
           curl --fail-with-body --silent --show-error             -X POST             -H "Authorization: Bearer $NF_TOKEN"             -H "Content-Type: application/json"             --data "$(jq -nc               --arg id "$NF_SERVICE"               --arg branch "main"               --arg sha "$NF_SHA"               --arg buildId "$NF_BUILD_ID"               '{internal:{id:$id,branch:$branch,buildSHA:$sha,buildId:$buildId}}')"             "https://api.northflank.com/v1/teams/$NF_TEAM/projects/$NF_PROJECT/services/$NF_SERVICE/deployment"
           echo
-          echo "Northflank promotion request accepted."
+          echo "Northflank promotion request accepted for $NF_SHA."
 
-      - name: Verify public Hermes health
+      - name: Verify production serves this exact SHA
         shell: bash
         run: |
           set -euo pipefail
-          url="https://p01--personal-cloud-agent-api--ds968wvrhzcj.code.run/health"
-          for attempt in $(seq 1 60); do
-            body="$(curl --silent --show-error --max-time 10 "$url" || true)"
-            if echo "$body" | jq -e '.status=="ok" and .gateway=="running" and .voice_stt=="ready"' >/dev/null 2>&1; then
-              echo "$body"
+          for attempt in $(seq 1 90); do
+            body="$(curl --silent --show-error --max-time 10 "$HERMES_HEALTH_URL" || true)"
+            served_sha="$(printf '%s' "$body" | jq -r '.build_sha // empty' 2>/dev/null || true)"
+            gateway="$(printf '%s' "$body" | jq -r '.gateway // empty' 2>/dev/null || true)"
+            if [ "$served_sha" = "$NF_SHA" ] && { [ "$gateway" = "running" ] || [ "$gateway" = "starting" ]; }; then
+              echo "$body" | jq .
               exit 0
             fi
             sleep 5
           done
-          echo "Public Hermes health did not return ready after promotion."
+          echo "Production never served expected SHA $NF_SHA."
+          curl --silent --show-error --max-time 10 "$HERMES_HEALTH_URL" || true
           exit 1
