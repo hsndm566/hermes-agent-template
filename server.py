@@ -1925,22 +1925,67 @@ async def page_index(request: Request):
 
 
 async def route_health(request: Request):
-    # If Hermes is configured, health means BOTH the always-on gateway and the
-    # local Telegram voice path are ready. start.sh creates the voice marker
-    # only after re-applying/compiling the adapter patch and checking ffmpeg,
-    # whisper.cpp, the wrapper, and both local models.
-    configured = is_config_complete()
+    # This endpoint is intentionally secret-free but must reflect whether the
+    # Telegram-first agent can actually accept work, not merely whether the
+    # wrapper process exists.  Northflank can otherwise stay green while Hermes
+    # is paused, unpaired, or missing the provider/token needed to answer.
+    data = read_env(ENV_FILE)
+    configured = is_config_complete(data)
+    model_ready = bool(data.get("LLM_MODEL"))
+    provider_ready = any(data.get(k) for k in PROVIDER_KEYS) or _has_xai_oauth_tokens()
+    telegram_ready = bool(data.get("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN", "").strip())
     gateway_ready = gw.state in {"running", "starting"}
+    paused = estop_state() is not None
+
     local_stt_enabled = os.getenv("HERMES_ENABLE_LOCAL_STT", "0").strip().lower() in {"1", "true", "yes", "on"}
     # Free-tier text mode intentionally skips the local Whisper model; voice is
     # opt-in and must not make Telegram text deployments report unhealthy.
     voice_ready = (not local_stt_enabled) or os.path.exists("/tmp/hermes-voice-ready")
-    healthy = (not configured) or (gateway_ready and voice_ready)
+
+    # Pairing data contains user identifiers, so expose counts only.
+    approved_count = 0
+    pending_count = 0
+    try:
+        approved_count = len(_pjson(pairing_dir() / "telegram-approved.json"))
+        pending_count = len(_pjson(pairing_dir() / "telegram-pending.json"))
+    except Exception:
+        pass
+
+    # Convert recent gateway output into a bounded category instead of leaking
+    # raw logs through the public health endpoint.
+    recent = "\n".join(list(gw.logs)[-80:]).lower()
+    gateway_issue = "none"
+    if paused:
+        gateway_issue = "paused"
+    elif gw.state == "crashed" or "fatal config" in recent or "code 78" in recent:
+        gateway_issue = "fatal_config"
+    elif "conflict" in recent and ("getupdates" in recent or "telegram" in recent):
+        gateway_issue = "telegram_polling_conflict"
+    elif "telegram" in recent and any(x in recent for x in ("unauthorized", "invalid token", "401")):
+        gateway_issue = "telegram_auth"
+    elif any(x in recent for x in ("no inference provider", "provider not configured", "model not configured")):
+        gateway_issue = "provider_config"
+    elif any(x in recent for x in ("rate limit", "rate_limit", "too many requests")):
+        gateway_issue = "provider_rate_limit"
+    elif gw.state == "error":
+        gateway_issue = "gateway_error"
+
+    healthy = (not configured) or (gateway_ready and voice_ready and not paused)
     return JSONResponse(
         {
             "status": "ok" if healthy else "degraded",
             "gateway": gw.state,
+            "gateway_issue": gateway_issue,
+            "config_complete": configured,
+            "model_configured": model_ready,
+            "provider_configured": provider_ready,
+            "telegram_configured": telegram_ready,
+            "telegram_approved_users": approved_count,
+            "telegram_pending_users": pending_count,
+            "telegram_owner_persisted": (Path(HERMES_HOME) / "telegram_owner.json").exists(),
+            "paused": paused,
             "voice_stt": "ready" if voice_ready else "not_ready",
+            "public_url_configured": bool(hermes_dashboard_public_url()),
             # Northflank injects the immutable serving SHA at runtime. Prefer
             # it over the optional template variable so health never reports
             # a stale commit after an image rollout.
