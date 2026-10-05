@@ -194,11 +194,12 @@ COPY telegram_capture.py /app/telegram_capture.py
 COPY scripts/hermes-drive-archive.py /app/scripts/hermes-drive-archive.py
 COPY scripts/bootstrap-hermes-team.py /app/scripts/bootstrap-hermes-team.py
 COPY scripts/recover-telegram-owner.py /app/scripts/recover-telegram-owner.py
+COPY scripts/configure-telegram-topics.py /app/scripts/configure-telegram-topics.py
 COPY scripts/my-agent-context.py /app/scripts/my-agent-context.py
 COPY scripts/deep-agent-run.py /app/scripts/deep-agent-run.py
 COPY scripts/configure-connectors.py /app/scripts/configure-connectors.py
-RUN chmod +x /app/start.sh /app/scripts/hermes-drive-archive.py /app/scripts/recover-telegram-owner.py /app/scripts/configure-connectors.py && \
-    python -m py_compile /app/server.py /app/scripts/hermes-drive-archive.py /app/scripts/bootstrap-hermes-team.py /app/scripts/recover-telegram-owner.py /app/scripts/patch-hermes-telegram-voice.py \
+RUN chmod +x /app/start.sh /app/scripts/hermes-drive-archive.py /app/scripts/recover-telegram-owner.py /app/scripts/configure-telegram-topics.py /app/scripts/configure-connectors.py && \
+    python -m py_compile /app/server.py /app/scripts/hermes-drive-archive.py /app/scripts/bootstrap-hermes-team.py /app/scripts/recover-telegram-owner.py /app/scripts/configure-telegram-topics.py /app/scripts/patch-hermes-telegram-voice.py \
       /app/scripts/configure-connectors.py \
       /app/personalization/scripts/final_certify.py \
       /opt/hermes-agent/plugins/platforms/telegram/adapter.py && \
