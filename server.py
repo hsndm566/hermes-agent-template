@@ -1991,7 +1991,12 @@ async def route_health(request: Request):
             # a stale commit after an image rollout.
             "build_sha": os.getenv("NF_DEPLOYMENT_SHA") or os.getenv("HERMES_DEPLOYED_SHA", "unknown"),
         },
-        status_code=200 if healthy else 503,
+        # Northflank uses this endpoint as the container readiness gate.  The
+        # wrapper process is the supervisor and already restarts Hermes itself;
+        # returning 503 for an agent-level pause/config problem removes the only
+        # instance from ingress and hides the diagnostics needed to repair it.
+        # Keep transport readiness (HTTP 200) separate from the JSON agent state.
+        status_code=200,
     )
 
 
