@@ -33,6 +33,7 @@ CONFIG_FILE = HOME / "config.yaml"
 LEGACY_PAIRING_DIR = HOME / "pairing"
 CONSOLIDATED_PAIRING_DIR = HOME / "platforms" / "pairing"
 MARKER = HOME / ".telegram_first_user_lock_done"
+STATUS_FILE = Path("/tmp/hermes-telegram-recovery.json")
 
 
 def pairing_dir() -> Path:
@@ -269,32 +270,114 @@ def persist_owner(uid: str, source: str) -> None:
     atomic_text(CONFIG_FILE, yaml.safe_dump(data, sort_keys=False))
 
 
-def main() -> int:
+def _token_from_runtime() -> str:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if token:
+        return token
+    try:
+        for raw in ENV_FILE.read_text(encoding="utf-8").splitlines():
+            if raw.startswith("TELEGRAM_BOT_TOKEN="):
+                return raw.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return ""
+
+
+def _write_status(status: dict) -> None:
+    safe = {
+        "token_present": bool(status.get("token_present")),
+        "token_valid": status.get("token_valid"),
+        "webhook_was_active": status.get("webhook_was_active"),
+        "webhook_cleared": status.get("webhook_cleared"),
+        "owner_persisted": bool(status.get("owner_persisted")),
+        "issue": str(status.get("issue") or "none"),
+    }
+    try:
+        atomic_text(STATUS_FILE, json.dumps(safe, sort_keys=True) + "\n")
+    except OSError:
+        pass
+
+
+def _classify_telegram_error(exc: RuntimeError) -> str:
+    text = str(exc).lower()
+    if any(x in text for x in ("unauthorized", "invalid token", "401")):
+        return "telegram_auth"
+    if "conflict" in text and "getupdates" in text:
+        return "telegram_polling_conflict"
+    return "telegram_api_error"
+
+
+def main() -> int:
+    status = {
+        "token_present": False,
+        "token_valid": None,
+        "webhook_was_active": None,
+        "webhook_cleared": None,
+        "owner_persisted": False,
+        "issue": "none",
+    }
+
+    token = _token_from_runtime()
     if not token:
-        log("bot token missing; recovery skipped")
+        status["issue"] = "telegram_token_missing"
+        _write_status(status)
+        log("bot token missing from process env and persisted runtime env; recovery skipped")
+        return 0
+    status["token_present"] = True
+
+    try:
+        telegram_api(token, "getMe", {})
+        status["token_valid"] = True
+    except RuntimeError as exc:
+        status["token_valid"] = False
+        status["issue"] = _classify_telegram_error(exc)
+        _write_status(status)
+        log(f"bot token validation failed: {status['issue']}")
+        return 0
+
+    try:
+        webhook = telegram_api(token, "getWebhookInfo", {})
+        webhook_url = str((webhook or {}).get("url") or "") if isinstance(webhook, dict) else ""
+        status["webhook_was_active"] = bool(webhook_url)
+        if webhook_url:
+            telegram_api(token, "deleteWebhook", {"drop_pending_updates": "false"})
+            status["webhook_cleared"] = True
+            log("cleared stale Telegram webhook before long polling")
+        else:
+            status["webhook_cleared"] = False
+    except RuntimeError as exc:
+        status["issue"] = _classify_telegram_error(exc)
+        _write_status(status)
+        log(f"webhook preflight unavailable: {status['issue']}")
         return 0
 
     uid = existing_owner()
     if uid:
         persist_owner(uid, "existing-owner")
+        status["owner_persisted"] = True
+        _write_status(status)
         log("single Telegram owner is persisted")
         return 0
 
     try:
         uid = pending_private_owner(token)
     except RuntimeError as exc:
-        log(f"pending-update recovery unavailable: {exc}")
+        status["issue"] = _classify_telegram_error(exc)
+        _write_status(status)
+        log(f"pending-update recovery unavailable: {status['issue']}")
         return 0
 
     if not uid:
+        status["issue"] = "telegram_owner_not_identified"
+        _write_status(status)
         log("no unique pending private owner found; leaving pairing mode unchanged")
         return 0
 
     persist_owner(uid, "pending-update-bootstrap")
+    status["owner_persisted"] = True
+    _write_status(status)
     log("recovered and persisted one Telegram DM owner")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

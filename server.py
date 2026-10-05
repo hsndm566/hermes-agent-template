@@ -1213,7 +1213,7 @@ COOKIE_MAX_AGE = 7 * 86400  # 7 days
 COOKIE_SECRET = secrets.token_bytes(32)
 
 # Public paths — no auth required. Everything else is behind the cookie gate.
-PUBLIC_PATHS = {"/health", "/setup/login", "/logout"}
+PUBLIC_PATHS = {"/health", "/diagnostics", "/setup/login", "/logout"}
 
 
 def _make_auth_token() -> str:
@@ -1926,37 +1926,45 @@ async def page_index(request: Request):
 
 # Northflank runtime diagnostics are intentionally public but secret-free.
 async def route_health(request: Request):
-    # Northflank probes this endpoint for wrapper liveness, while the JSON
-    # reports whether the Telegram-first agent can actually accept work.
-    data = read_env(ENV_FILE)
-    configured = is_config_complete(data)
-    model_ready = bool(data.get("LLM_MODEL"))
-    provider_ready = any(data.get(k) for k in PROVIDER_KEYS) or _has_xai_oauth_tokens()
-    telegram_ready = bool(data.get("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN", "").strip())
-    gateway_ready = gw.state in {"running", "starting"}
-    paused = estop_state() is not None
+    """Transport-only readiness for Northflank.
 
+    Never depend on Telegram, pairing, provider state, or the Hermes gateway.
+    Those are agent diagnostics, not reasons to remove the wrapper from ingress.
+    """
     local_stt_enabled = os.getenv("HERMES_ENABLE_LOCAL_STT", "0").strip().lower() in {"1", "true", "yes", "on"}
-    # Free-tier text mode intentionally skips the local Whisper model; voice is
-    # opt-in and must not make Telegram text deployments report unhealthy.
     voice_ready = (not local_stt_enabled) or os.path.exists("/tmp/hermes-voice-ready")
+    return JSONResponse(
+        {
+            "status": "ok",
+            "gateway": getattr(gw, "state", "unknown"),
+            "voice_stt": "ready" if voice_ready else "not_ready",
+            "build_sha": os.getenv("NF_DEPLOYMENT_SHA") or os.getenv("HERMES_DEPLOYED_SHA", "unknown"),
+        },
+        status_code=200,
+    )
 
-    # Pairing data contains user identifiers, so expose counts only.
-    approved_count = 0
-    pending_count = 0
-    try:
-        approved_count = len(_pjson(pairing_dir() / "telegram-approved.json"))
-        pending_count = len(_pjson(pairing_dir() / "telegram-pending.json"))
-    except Exception:
-        pass
 
-    # Convert recent gateway output into a bounded category instead of leaking
-    # raw logs through the public health endpoint.
-    recent = "\n".join(list(gw.logs)[-80:]).lower()
+async def route_diagnostics(request: Request):
+    """Secret-free agent diagnostics, deliberately NOT used as readiness."""
+    def safe(callable_, default):
+        try:
+            return callable_()
+        except Exception:
+            return default
+
+    data = safe(lambda: read_env(ENV_FILE), {})
+    model_ready = bool(data.get("LLM_MODEL"))
+    provider_ready = safe(lambda: any(data.get(k) for k in PROVIDER_KEYS) or _has_xai_oauth_tokens(), False)
+    telegram_ready = bool(data.get("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN", "").strip())
+    paused = safe(lambda: estop_state() is not None, True)
+    approved_count = safe(lambda: len(_pjson(pairing_dir() / "telegram-approved.json")), 0)
+    pending_count = safe(lambda: len(_pjson(pairing_dir() / "telegram-pending.json")), 0)
+    recent = safe(lambda: "\n".join(list(gw.logs)[-120:]).lower(), "")
+
     gateway_issue = "none"
     if paused:
         gateway_issue = "paused"
-    elif gw.state == "crashed" or "fatal config" in recent or "code 78" in recent:
+    elif getattr(gw, "state", "unknown") in {"crashed", "fatal"} or "fatal config" in recent or "code 78" in recent:
         gateway_issue = "fatal_config"
     elif "conflict" in recent and ("getupdates" in recent or "telegram" in recent):
         gateway_issue = "telegram_polling_conflict"
@@ -1966,38 +1974,40 @@ async def route_health(request: Request):
         gateway_issue = "provider_config"
     elif any(x in recent for x in ("rate limit", "rate_limit", "too many requests")):
         gateway_issue = "provider_rate_limit"
-    elif gw.state == "error":
+    elif getattr(gw, "state", "unknown") == "error":
         gateway_issue = "gateway_error"
 
-    healthy = (not configured) or (gateway_ready and voice_ready and not paused)
+    repair = {}
+    try:
+        status_path = Path("/tmp/hermes-telegram-recovery.json")
+        if status_path.exists():
+            loaded = json.loads(status_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                repair = loaded
+    except Exception:
+        repair = {}
+
     return JSONResponse(
         {
-            "status": "ok" if healthy else "degraded",
-            "gateway": gw.state,
+            "status": "ok",
+            "gateway": getattr(gw, "state", "unknown"),
             "gateway_issue": gateway_issue,
-            "config_complete": configured,
+            "config_complete": bool(model_ready and provider_ready),
             "model_configured": model_ready,
             "provider_configured": provider_ready,
             "telegram_configured": telegram_ready,
+            "telegram_token_valid": repair.get("token_valid"),
+            "telegram_webhook_was_active": repair.get("webhook_was_active"),
+            "telegram_webhook_cleared": repair.get("webhook_cleared"),
+            "telegram_recovery_issue": repair.get("issue", "not_run"),
             "telegram_approved_users": approved_count,
             "telegram_pending_users": pending_count,
-            "telegram_owner_persisted": (Path(HERMES_HOME) / "telegram_owner.json").exists(),
+            "telegram_owner_persisted": safe(lambda: (Path(HERMES_HOME) / "telegram_owner.json").exists(), False),
             "paused": paused,
-            "voice_stt": "ready" if voice_ready else "not_ready",
-            "public_url_configured": bool(hermes_dashboard_public_url()),
-            # Northflank injects the immutable serving SHA at runtime. Prefer
-            # it over the optional template variable so health never reports
-            # a stale commit after an image rollout.
             "build_sha": os.getenv("NF_DEPLOYMENT_SHA") or os.getenv("HERMES_DEPLOYED_SHA", "unknown"),
         },
-        # Northflank uses this endpoint as the container readiness gate.  The
-        # wrapper process is the supervisor and already restarts Hermes itself;
-        # returning 503 for an agent-level pause/config problem removes the only
-        # instance from ingress and hides the diagnostics needed to repair it.
-        # Keep transport readiness (HTTP 200) separate from the JSON agent state.
         status_code=200,
     )
-
 
 async def api_config_get(request: Request):
     if err := guard(request): return err
@@ -3339,6 +3349,7 @@ ANY_METHOD = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
 routes = [
     # Public — no auth required.
     Route("/health",                            route_health),
+    Route("/diagnostics",                       route_diagnostics),
     # Our sign-in lives under /setup/* so the bare /login path stays free.
     # hermes' own gated dashboard redirects unauthenticated requests there, and
     # a route of ours at /login would answer instead — the browser would bounce

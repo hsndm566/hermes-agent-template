@@ -1,6 +1,6 @@
+#!/bin/bash
 # Northflank free-tier Telegram runtime: keep optional work gated by explicit flags.
 # Profile persistence is disk-backed; HERMES_ENABLE_PROFILE_MULTIPLEX=1 opt-in keeps the 512MB worker text-first.
-#!/bin/bash
 set -e
 
 # Mirror dashboard-ref-only's startup: create every directory hermes expects
@@ -1020,11 +1020,30 @@ else
   echo "[certification] deferred for low-memory Telegram runtime"
 fi
 
+# One-time repair for the October 2026 Northflank Telegram outage.
+# ESTOP is persistent and can leave a healthy gateway silently refusing every DM.
+# Clear it exactly once for this repair release, then preserve future intentional pauses.
+TELEGRAM_RUNTIME_REPAIR_MARKER="/data/.hermes/.telegram_runtime_repair_20261006"
+telegram_runtime_repair_first_boot=0
+if [ ! -f "$TELEGRAM_RUNTIME_REPAIR_MARKER" ]; then
+  telegram_runtime_repair_first_boot=1
+  if [ -f /data/.hermes/ESTOP ]; then
+    rm -f /data/.hermes/ESTOP
+    echo "[telegram-repair] cleared stale Hermes ESTOP" >&2
+  fi
+fi
+
 # Recover the personal Telegram DM owner while no Hermes long-poller is running.
 # This never creates Telegram forum topics and refuses to guess among multiple users.
 if [ -x /app/scripts/recover-telegram-owner.py ]; then
   python /app/scripts/recover-telegram-owner.py || true
   echo "[telegram-owner] pre-gateway recovery finished" >&2
+fi
+
+if [ "$telegram_runtime_repair_first_boot" = "1" ]; then
+  touch "$TELEGRAM_RUNTIME_REPAIR_MARKER"
+  chmod 600 "$TELEGRAM_RUNTIME_REPAIR_MARKER" 2>/dev/null || true
+  echo "[telegram-repair] one-time runtime repair completed" >&2
 fi
 
 exec python /app/server.py
