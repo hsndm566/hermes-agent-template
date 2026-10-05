@@ -30,9 +30,23 @@ HOME = Path(os.environ.get("HERMES_HOME", "/data/.hermes"))
 ENV_FILE = HOME / ".env"
 OWNER_FILE = HOME / "telegram_owner.json"
 CONFIG_FILE = HOME / "config.yaml"
-PAIRING_DIR = HOME / "platforms" / "pairing"
-APPROVED_FILE = PAIRING_DIR / "telegram-approved.json"
+LEGACY_PAIRING_DIR = HOME / "pairing"
+CONSOLIDATED_PAIRING_DIR = HOME / "platforms" / "pairing"
 MARKER = HOME / ".telegram_first_user_lock_done"
+
+
+def pairing_dir() -> Path:
+    """Resolve the same active pairing store Hermes itself uses."""
+    try:
+        if LEGACY_PAIRING_DIR.is_dir() and any(LEGACY_PAIRING_DIR.iterdir()):
+            return LEGACY_PAIRING_DIR
+    except OSError:
+        return LEGACY_PAIRING_DIR
+    return CONSOLIDATED_PAIRING_DIR
+
+
+def approved_file() -> Path:
+    return pairing_dir() / "telegram-approved.json"
 
 
 def log(message: str) -> None:
@@ -78,12 +92,11 @@ def existing_owner() -> str:
     if candidate.isdigit() and int(candidate) > 0:
         return candidate
 
-    approved = read_json(APPROVED_FILE)
+    approved = read_json(approved_file())
     candidates: set[str] = set()
     for key, value in approved.items():
-        uid = str((value or {}).get("user_id") if isinstance(value, dict) else key).strip()
-        if not uid:
-            uid = str(key).strip()
+        raw_uid = (value or {}).get("user_id") if isinstance(value, dict) else ""
+        uid = str(raw_uid or key).strip()
         if uid.isdigit() and int(uid) > 0:
             candidates.add(uid)
     if len(candidates) == 1:
@@ -190,8 +203,8 @@ def pending_private_owner(token: str) -> str:
 
 
 def persist_owner(uid: str, source: str) -> None:
-    PAIRING_DIR.mkdir(parents=True, exist_ok=True)
-    approved = read_json(APPROVED_FILE)
+    pairing_dir().mkdir(parents=True, exist_ok=True)
+    approved = read_json(approved_file())
     approved = {
         uid: {
             "user_id": uid,
@@ -199,7 +212,7 @@ def persist_owner(uid: str, source: str) -> None:
             "approved_at": time.time(),
         }
     }
-    atomic_text(APPROVED_FILE, json.dumps(approved, indent=2, sort_keys=True) + "\n")
+    atomic_text(approved_file(), json.dumps(approved, indent=2, sort_keys=True) + "\n")
     atomic_text(
         OWNER_FILE,
         json.dumps(
