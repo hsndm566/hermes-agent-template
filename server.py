@@ -1977,6 +1977,27 @@ async def route_diagnostics(request: Request):
     elif getattr(gw, "state", "unknown") == "error":
         gateway_issue = "gateway_error"
 
+    runtime = {}
+    telegram_runtime = {}
+    try:
+        runtime_path = Path(HERMES_HOME) / "gateway_state.json"
+        if runtime_path.exists():
+            loaded_runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+            if isinstance(loaded_runtime, dict):
+                runtime = loaded_runtime
+                platforms = runtime.get("platforms") if isinstance(runtime.get("platforms"), dict) else {}
+                candidate = platforms.get("telegram")
+                if isinstance(candidate, dict):
+                    telegram_runtime = candidate
+                else:
+                    for key, value in platforms.items():
+                        if isinstance(key, str) and key.endswith(":telegram") and isinstance(value, dict):
+                            telegram_runtime = value
+                            break
+    except Exception:
+        runtime = {}
+        telegram_runtime = {}
+
     repair = {}
     try:
         status_path = Path("/tmp/hermes-telegram-recovery.json")
@@ -2000,6 +2021,13 @@ async def route_diagnostics(request: Request):
             "telegram_webhook_was_active": repair.get("webhook_was_active"),
             "telegram_webhook_cleared": repair.get("webhook_cleared"),
             "telegram_recovery_issue": repair.get("issue", "not_run"),
+            "telegram_outbound_probe_sent": repair.get("outbound_probe_sent"),
+            "telegram_platform_state": telegram_runtime.get("state"),
+            "telegram_platform_error_code": telegram_runtime.get("error_code"),
+            "telegram_platform_needs_attention": telegram_runtime.get("needs_attention"),
+            "telegram_platform_retrying_since": telegram_runtime.get("retrying_since"),
+            "gateway_runtime_state": runtime.get("gateway_state"),
+            "gateway_runtime_exit_reason": runtime.get("exit_reason"),
             "telegram_approved_users": approved_count,
             "telegram_pending_users": pending_count,
             "telegram_owner_persisted": safe(lambda: (Path(HERMES_HOME) / "telegram_owner.json").exists(), False),
