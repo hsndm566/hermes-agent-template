@@ -1924,7 +1924,7 @@ async def page_index(request: Request):
     return templates.TemplateResponse(request, "index.html")
 
 
-async def route_health(request: Request):
+# Northflank runtime diagnostics are intentionally public but secret-free.\nasync def route_health(request: Request):
     # This endpoint is intentionally secret-free. Northflank probes it for
     # wrapper liveness, while the JSON reports whether the Telegram-first agent
     # can actually accept work rather than merely whether the supervisor exists.
