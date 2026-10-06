@@ -1449,42 +1449,55 @@ class Gateway:
             print(f"[gateway] model={model or '⚠ NOT SET'} | provider_key={'set' if provider_key else '⚠ NOT SET'}", flush=True)
             # Write config.yaml so hermes picks up the model (env vars alone aren't always enough)
             write_config_yaml(read_env(ENV_FILE))
-            # --replace: force-displace any existing gateway.pid lock holder
-            # before claiming it. Without this, a lock left behind by a prior
-            # incarnation this supervisor doesn't recognize as "our" dead
-            # process (e.g. hermes' own dashboard spawns its own detached
-            # `hermes gateway restart` via its native /api/gateway/restart
-            # action, entirely outside this class's tracking) makes every
-            # subsequent plain `hermes gateway` invocation refuse to start
-            # ("Another gateway instance is already running"), which
-            # _clear_stale_pidfile() can never self-heal since it only clears
-            # a pid file matching the exact pid THIS supervisor just watched
-            # die. --replace is hermes' own blessed fix for exactly this
-            # class of stuck-lock — it force-kills whatever holds the lock
-            # (graceful SIGTERM, escalating to SIGKILL) before claiming it.
-            # --external-supervisor: tells hermes a process manager owns this
-            # gateway. v2026.8.27 narrowed its self-stop guard from the inherited
-            # _HERMES_GATEWAY marker to _is_supervised_gateway_process(), which
-            # also requires a supervisor marker — none of systemd/launchd/s6
-            # applies here, so without this flag the agent's own terminal and
-            # execute_code tools will happily run `hermes gateway stop` on
-            # themselves (they run in-process, so they satisfy the PID-file
-            # ownership half). It does not change the exit-75 restart contract:
-            # /restart already takes the via_service branch on container
-            # detection (gateway/slash_commands.py), which this only ORs with.
+            # Bypass hermes_cli.main for the managed child. v2026.9.11 ships a
+            # dedicated gateway.run entrypoint specifically for the gateway itself.
+            # The full `hermes gateway run` console command imports the complete CLI
+            # bootstrap before entering gateway.run; on this 512 MB service we observed
+            # a live child PID with zero gateway output and no gateway_state.json, i.e.
+            # it never reached the gateway event loop. Direct module execution avoids
+            # that pre-loop CLI import surface while preserving Hermes' own gateway
+            # startup/watchdog/config logic.
+            #
+            # The direct entrypoint has no --external-supervisor flag, so set the
+            # canonical environment marker consumed by Hermes restart logic instead.
+            env["HERMES_GATEWAY_EXTERNAL_SUPERVISOR"] = "1"
+            # Fail a genuine pre-loop wedge sooner than upstream's 300 s desktop
+            # default; the persistent watchdog dump remains available for diagnosis.
+            env.setdefault("HERMES_STARTUP_WATCHDOG_TIMEOUT_S", "120")
             self.proc = await asyncio.create_subprocess_exec(
-                "hermes", "gateway", "run", "--replace", "--external-supervisor",
+                "python", "-m", "gateway.run", "--verbose",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 env=env,
             )
-            self.state = "running"
+            # A spawned PID is not proof that Hermes initialized. Keep the wrapper
+            # in "starting" until gateway_state.json is written by THIS child.
             self.started_at = time.time()
             self._started_monotonic = time.monotonic()
             asyncio.create_task(self._drain(self.proc))
+            asyncio.create_task(self._watch_runtime_ready(self.proc))
         except Exception as e:
             self.state = "error"
             self.logs.append(f"[error] Failed to start: {e}")
+
+    async def _watch_runtime_ready(self, proc: asyncio.subprocess.Process):
+        """Promote wrapper state only after Hermes itself proves readiness."""
+        runtime_path = Path(HERMES_HOME) / "gateway_state.json"
+        while proc is self.proc and proc.returncode is None and not self._stopping:
+            try:
+                record = json.loads(runtime_path.read_text(encoding="utf-8"))
+            except Exception:
+                record = {}
+            try:
+                record_pid = int(record.get("pid"))
+            except (TypeError, ValueError):
+                record_pid = None
+            gateway_state = str(record.get("gateway_state") or "").lower()
+            if record_pid == proc.pid and gateway_state in {"running", "draining"}:
+                self.state = "running"
+                self.logs.append(f"[gateway] runtime ready pid={proc.pid} state={gateway_state}")
+                return
+            await asyncio.sleep(1)
 
     async def stop(self):
         self._stopping = True
@@ -2040,6 +2053,27 @@ async def route_diagnostics(request: Request):
         if all(needle in log_text for needle in needles):
             log_flags.append(name)
 
+    watchdog = {}
+    try:
+        watchdog_path = Path(HERMES_HOME) / "logs" / "gateway-startup-watchdog.log"
+        if watchdog_path.exists():
+            for line in reversed(watchdog_path.read_text(encoding="utf-8", errors="replace").splitlines()):
+                line = line.strip()
+                if not line.startswith("{"):
+                    continue
+                parsed = json.loads(line)
+                if isinstance(parsed, dict) and parsed.get("tag") == "startup_watchdog.fired":
+                    watchdog = {
+                        "fired": True,
+                        "timeout_s": parsed.get("timeout_s"),
+                        "elapsed_s": parsed.get("elapsed_s"),
+                        "exit_code": parsed.get("exit_code"),
+                        "last_lease_phase": parsed.get("last_lease_phase"),
+                    }
+                    break
+    except Exception:
+        watchdog = {}
+
     repair = {}
     try:
         status_path = Path("/tmp/hermes-telegram-recovery.json")
@@ -2075,6 +2109,7 @@ async def route_diagnostics(request: Request):
             "telegram_platform_retrying_since": telegram_runtime.get("retrying_since"),
             "gateway_runtime_state": runtime.get("gateway_state"),
             "gateway_runtime_exit_reason": runtime.get("exit_reason"),
+            "gateway_startup_watchdog": watchdog or {"fired": False},
             "telegram_approved_users": approved_count,
             "telegram_pending_users": pending_count,
             "telegram_owner_persisted": safe(lambda: (Path(HERMES_HOME) / "telegram_owner.json").exists(), False),
