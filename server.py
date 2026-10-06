@@ -1933,6 +1933,26 @@ async def route_health(request: Request):
     """
     local_stt_enabled = os.getenv("HERMES_ENABLE_LOCAL_STT", "0").strip().lower() in {"1", "true", "yes", "on"}
     voice_ready = (not local_stt_enabled) or os.path.exists("/tmp/hermes-voice-ready")
+    log_text = "\n".join(list(gw.logs)[-160:]).lower()
+    log_flags = []
+    for name, needles in (
+        ("telegram_connected", ("connected to telegram",)),
+        ("telegram_connecting", ("connecting to telegram",)),
+        ("telegram_no_poll_progress", ("getupdates made no progress", "did not become ready")),
+        ("telegram_polling_conflict", ("conflict", "getupdates")),
+        ("telegram_auth_error", ("telegram", "unauthorized")),
+        ("telegram_missing_credentials", ("no bot token configured", "missing_credentials")),
+        ("gateway_replace_refused", ("refusing --replace",)),
+        ("gateway_fatal_config", ("fatal config", "code 78")),
+        ("gateway_exited", ("[gateway] exited",)),
+        ("gateway_crash_loop", ("crash-looping",)),
+        ("provider_auth_error", ("provider authentication failed", "incorrect api key", "invalid api key")),
+        ("provider_rate_limit", ("rate limit", "too many requests")),
+        ("traceback_seen", ("traceback (most recent call last)",)),
+    ):
+        if all(needle in log_text for needle in needles):
+            log_flags.append(name)
+
     return JSONResponse(
         {
             "status": "ok",
@@ -2012,6 +2032,11 @@ async def route_diagnostics(request: Request):
         {
             "status": "ok",
             "gateway": getattr(gw, "state", "unknown"),
+            "gateway_process_pid": gw.proc.pid if gw.proc and gw.proc.returncode is None else None,
+            "gateway_process_returncode": gw.proc.returncode if gw.proc else None,
+            "gateway_process_uptime_seconds": int(time.time() - gw.started_at) if gw.started_at else None,
+            "gateway_log_flags": log_flags,
+            "gateway_log_lines_buffered": len(gw.logs),
             "gateway_issue": gateway_issue,
             "config_complete": bool(model_ready and provider_ready),
             "model_configured": model_ready,

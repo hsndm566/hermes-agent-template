@@ -205,6 +205,7 @@ def pending_private_owner(token: str) -> str:
 
 def persist_owner(uid: str, source: str) -> None:
     pairing_dir().mkdir(parents=True, exist_ok=True)
+    approved = read_json(approved_file())
     approved = {
         uid: {
             "user_id": uid,
@@ -229,29 +230,38 @@ def persist_owner(uid: str, source: str) -> None:
     )
     atomic_text(MARKER, "locked\n")
     write_env_value("TELEGRAM_ALLOWED_USERS", uid)
-    write_env_value("TELEGRAM_HOME_CHANNEL", uid)
 
-    # Hermes v2026.9.11 uses the top-level platforms.telegram schema.
+    # Lock the native Telegram adapter to this owner. This is deliberately
+    # separate from forum-topic/profile routing.
     try:
         data = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
     except Exception:
         data = {}
     if not isinstance(data, dict):
         data = {}
-
-    platforms = data.setdefault("platforms", {})
+    gateway = data.setdefault("gateway", {})
+    if not isinstance(gateway, dict):
+        gateway = {}
+        data["gateway"] = gateway
+    platforms = gateway.setdefault("platforms", {})
     if not isinstance(platforms, dict):
         platforms = {}
-        data["platforms"] = platforms
-
+        gateway["platforms"] = platforms
     telegram = platforms.setdefault("telegram", {})
     if not isinstance(telegram, dict):
         telegram = {}
         platforms["telegram"] = telegram
-
     telegram["enabled"] = True
-    telegram["allow_from"] = [uid]
-    telegram["home_channel"] = {"platform": "telegram", "chat_id": uid}
+    # Keep the owner's private DM as Hermes' home channel across restarts.
+    # `/sethome` writes this gateway setting, but a fresh config bootstrap can
+    # recreate the Telegram block before the gateway starts. Reapply it only
+    # for the already-persisted single owner; never widen access to other users.
+    home = telegram.get("home_channel")
+    if not isinstance(home, dict) or str(home.get("chat_id") or "").strip() != uid:
+        telegram["home_channel"] = {
+            "platform": "telegram",
+            "chat_id": uid,
+        }
     extra = telegram.setdefault("extra", {})
     if not isinstance(extra, dict):
         extra = {}
@@ -259,28 +269,6 @@ def persist_owner(uid: str, source: str) -> None:
     extra["dm_policy"] = "allowlist"
     atomic_text(CONFIG_FILE, yaml.safe_dump(data, sort_keys=False))
 
-
-def _send_outbound_probe_once(token: str, uid: str) -> bool:
-    """Prove Bot API egress once without exposing the token or owner id."""
-    marker = HOME / ".telegram_outbound_probe_20261006"
-    if marker.exists():
-        return True
-    try:
-        telegram_api(
-            token,
-            "sendMessage",
-            {
-                "chat_id": uid,
-                "text": "Hermes recovery probe: Telegram outbound transport is working.",
-                "disable_notification": "true",
-            },
-        )
-        atomic_text(marker, "sent\n")
-        log("outbound Telegram recovery probe delivered")
-        return True
-    except RuntimeError as exc:
-        log(f"outbound Telegram recovery probe failed: {_classify_telegram_error(exc)}")
-        return False
 
 def _token_from_runtime() -> str:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -302,7 +290,6 @@ def _write_status(status: dict) -> None:
         "webhook_was_active": status.get("webhook_was_active"),
         "webhook_cleared": status.get("webhook_cleared"),
         "owner_persisted": bool(status.get("owner_persisted")),
-        "outbound_probe_sent": status.get("outbound_probe_sent"),
         "issue": str(status.get("issue") or "none"),
     }
     try:
@@ -327,7 +314,6 @@ def main() -> int:
         "webhook_was_active": None,
         "webhook_cleared": None,
         "owner_persisted": False,
-        "outbound_probe_sent": None,
         "issue": "none",
     }
 
@@ -369,9 +355,6 @@ def main() -> int:
     if uid:
         persist_owner(uid, "existing-owner")
         status["owner_persisted"] = True
-        status["outbound_probe_sent"] = _send_outbound_probe_once(token, uid)
-        if not status["outbound_probe_sent"]:
-            status["issue"] = "telegram_outbound_send_failed"
         _write_status(status)
         log("single Telegram owner is persisted")
         return 0
@@ -392,9 +375,6 @@ def main() -> int:
 
     persist_owner(uid, "pending-update-bootstrap")
     status["owner_persisted"] = True
-    status["outbound_probe_sent"] = _send_outbound_probe_once(token, uid)
-    if not status["outbound_probe_sent"]:
-        status["issue"] = "telegram_outbound_send_failed"
     _write_status(status)
     log("recovered and persisted one Telegram DM owner")
     return 0
