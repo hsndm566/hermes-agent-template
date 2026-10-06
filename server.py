@@ -2018,6 +2018,28 @@ async def route_diagnostics(request: Request):
         runtime = {}
         telegram_runtime = {}
 
+    log_text = "\n".join(list(gw.logs)[-160:]).lower()
+    log_flags = []
+    for name, needles in (
+        ("telegram_connected", ("connected to telegram",)),
+        ("telegram_connecting", ("connecting to telegram",)),
+        ("telegram_no_poll_progress", ("getupdates made no progress",)),
+        ("telegram_not_ready", ("did not become ready",)),
+        ("telegram_polling_conflict", ("conflict", "getupdates")),
+        ("telegram_auth_error", ("telegram", "unauthorized")),
+        ("telegram_missing_credentials", ("no bot token configured",)),
+        ("gateway_replace_refused", ("refusing --replace",)),
+        ("gateway_fatal_config", ("fatal config", "code 78")),
+        ("gateway_exited", ("[gateway] exited",)),
+        ("gateway_crash_loop", ("crash-looping",)),
+        ("provider_auth_error", ("provider authentication failed",)),
+        ("provider_invalid_key", ("invalid api key",)),
+        ("provider_rate_limit", ("rate limit",)),
+        ("traceback_seen", ("traceback (most recent call last)",)),
+    ):
+        if all(needle in log_text for needle in needles):
+            log_flags.append(name)
+
     repair = {}
     try:
         status_path = Path("/tmp/hermes-telegram-recovery.json")
