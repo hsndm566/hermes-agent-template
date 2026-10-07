@@ -2134,7 +2134,7 @@ async def route_diagnostics(request: Request):
             "gateway_startup_watchdog": watchdog or {"fired": False},
             "mcp_server_count": config_topology["mcp_server_count"],
             "multiplex_profiles": config_topology["multiplex_profiles"],
-            "gateway_mcp_boot_discovery_skipped": os.getenv("HERMES_SKIP_GATEWAY_MCP_DISCOVERY", "0").strip().lower() in {"1", "true", "yes", "on"},
+            "gateway_mcp_boot_discovery_skipped": Path("/tmp/hermes-mcp-bypass-active").exists(),
             "telegram_approved_users": approved_count,
             "telegram_pending_users": pending_count,
             "telegram_owner_persisted": safe(lambda: (Path(HERMES_HOME) / "telegram_owner.json").exists(), False),
