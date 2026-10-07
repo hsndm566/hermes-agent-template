@@ -1033,12 +1033,10 @@ if [ ! -f "$TELEGRAM_RUNTIME_REPAIR_MARKER" ]; then
   fi
 fi
 
-# Recover the personal Telegram DM owner while no Hermes long-poller is running.
-# This never creates Telegram forum topics and refuses to guess among multiple users.
-if [ -x /app/scripts/recover-telegram-owner.py ]; then
-  python /app/scripts/recover-telegram-owner.py || true
-  echo "[telegram-owner] pre-gateway recovery finished" >&2
-fi
+# Telegram network recovery is intentionally NOT run here.
+# Blocking Bot API calls before the HTTP wrapper starts can make Northflank
+# kill the container for failed readiness. server.py runs the same repair
+# asynchronously after /health can come up and before Hermes starts polling.
 
 if [ "$telegram_runtime_repair_first_boot" = "1" ]; then
   touch "$TELEGRAM_RUNTIME_REPAIR_MARKER"

@@ -3199,9 +3199,45 @@ async def route_setup_404(request: Request) -> Response:
 
 
 # ── App lifecycle ─────────────────────────────────────────────────────────────
+async def _recover_telegram_then_start_gateway():
+    """Keep Northflank HTTP readiness independent from Telegram network latency.
+
+    Recovery runs after Starlette has entered lifespan (so /health can become
+    available immediately) but before Hermes starts its own getUpdates poller.
+    """
+    recovery_script = Path("/app/scripts/recover-telegram-owner.py")
+    if recovery_script.exists():
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "python", str(recovery_script),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                env=build_hermes_env(),
+            )
+            output, _ = await asyncio.wait_for(proc.communicate(), timeout=45)
+            for raw_line in output.decode(errors="replace").splitlines()[-80:]:
+                line = f"[telegram-recovery] {raw_line}"
+                gw.logs.append(line)
+                print(line, flush=True)
+        except asyncio.TimeoutError:
+            if proc is not None and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            msg = "[telegram-recovery] timed out after 45s; starting Hermes gateway anyway"
+            gw.logs.append(msg)
+            print(msg, flush=True)
+        except Exception as exc:
+            msg = f"[telegram-recovery] failed open: {type(exc).__name__}"
+            gw.logs.append(msg)
+            print(msg, flush=True)
+
+    await gw.start()
+
+
 async def auto_start():
     if is_config_complete():
-        asyncio.create_task(gw.start())
+        asyncio.create_task(_recover_telegram_then_start_gateway())
     else:
         print("[server] Config incomplete — gateway not started. Configure provider + model in the admin UI.", flush=True)
 

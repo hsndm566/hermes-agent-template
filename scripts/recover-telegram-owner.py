@@ -262,11 +262,7 @@ def persist_owner(uid: str, source: str) -> None:
             "platform": "telegram",
             "chat_id": uid,
         }
-    extra = telegram.setdefault("extra", {})
-    if not isinstance(extra, dict):
-        extra = {}
-        telegram["extra"] = extra
-    extra["dm_policy"] = "allowlist"
+    telegram["dm_policy"] = "allowlist"
     atomic_text(CONFIG_FILE, yaml.safe_dump(data, sort_keys=False))
 
 
