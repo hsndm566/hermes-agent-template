@@ -36,6 +36,7 @@ import secrets
 import shutil
 import signal
 import tempfile
+import threading
 import time
 import zipfile
 from collections import deque
@@ -833,6 +834,7 @@ def build_hermes_env() -> dict[str, str]:
     # reaches polling. The lightweight launcher below can skip ONLY this boot
     # discovery while leaving mcp_servers persisted for dashboard/manual use.
     env.setdefault("HERMES_SKIP_GATEWAY_MCP_DISCOVERY", "1")
+    env.setdefault("HERMES_INPROCESS_GATEWAY", "1")
     # Drop inbound values first: the template is the only thing allowed to
     # decide these (this pop covers a Railway service variable, which lands in
     # our own os.environ; _sanitize_env_file() covers the .env file).
@@ -1435,8 +1437,120 @@ class Gateway:
         self._exit_chain = 0
         self._last_exit_at: float | None = None
         self._started_monotonic: float | None = None
+        # Low-memory Northflank mode: run Hermes in this interpreter on its own
+        # thread/event-loop instead of spawning a second Python runtime.
+        self._gateway_thread: threading.Thread | None = None
+        self._gateway_loop: asyncio.AbstractEventLoop | None = None
+        self._gateway_run_module = None
+        self._inprocess_stopping = False
+
+    def _inprocess_enabled(self) -> bool:
+        return os.getenv("HERMES_INPROCESS_GATEWAY", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+    def _inprocess_thread_main(self) -> None:
+        async def _run() -> None:
+            self._gateway_loop = asyncio.get_running_loop()
+            try:
+                from gateway import run as gateway_run
+                import tools.mcp_tool_discovery as mcp_discovery
+
+                self._gateway_run_module = gateway_run
+
+                if os.getenv("HERMES_SKIP_GATEWAY_MCP_DISCOVERY", "0").strip().lower() in {"1", "true", "yes", "on"}:
+                    def _skip_mcp(*_args, **_kwargs):
+                        print("[gateway-lite] MCP discovery bypass active for low-memory Telegram runtime", flush=True)
+                        return []
+
+                    async def _skip_gateway_mcp(_config):
+                        _skip_mcp()
+
+                    mcp_discovery.discover_mcp_tools = _skip_mcp
+                    gateway_run._discover_gateway_mcp_tools = _skip_gateway_mcp
+                    try:
+                        Path("/tmp/hermes-mcp-bypass-active").write_text("1\n", encoding="utf-8")
+                    except OSError:
+                        pass
+
+                ok = await gateway_run.start_gateway(replace=True, verbosity=1)
+                if self._inprocess_stopping:
+                    self.state = "stopped"
+                elif ok:
+                    # start_gateway normally runs until an explicit stop.
+                    self.state = "stopped"
+                    self.logs.append("[gateway] in-process gateway exited cleanly")
+                else:
+                    self.state = "error"
+                    self.logs.append("[gateway] in-process gateway returned failure")
+            except BaseException as exc:
+                if self._inprocess_stopping:
+                    self.state = "stopped"
+                else:
+                    self.state = "error"
+                    self.logs.append(f"[gateway] in-process failure: {type(exc).__name__}: {exc}")
+                    print(self.logs[-1], flush=True)
+            finally:
+                self._gateway_loop = None
+
+        asyncio.run(_run())
+
+    async def _watch_inprocess_runtime_ready(self) -> None:
+        runtime_path = Path(HERMES_HOME) / "gateway_state.json"
+        while (
+            self._gateway_thread is not None
+            and self._gateway_thread.is_alive()
+            and not self._stopping
+        ):
+            try:
+                record = json.loads(runtime_path.read_text(encoding="utf-8"))
+            except Exception:
+                record = {}
+            try:
+                record_pid = int(record.get("pid"))
+            except (TypeError, ValueError):
+                record_pid = None
+            gateway_state = str(record.get("gateway_state") or "").lower()
+            if record_pid == os.getpid() and gateway_state in {"running", "draining"}:
+                self.state = "running"
+                self.logs.append(
+                    f"[gateway] in-process runtime ready pid={record_pid} state={gateway_state}"
+                )
+                return
+            await asyncio.sleep(1)
+
+    async def _start_inprocess(self, *, reset_budget: bool = True) -> None:
+        if self._gateway_thread is not None and self._gateway_thread.is_alive():
+            return
+        if reset_budget:
+            self._recent_exits.clear()
+            self._exit_chain = 0
+            self._last_exit_at = None
+
+        self.state = "starting"
+        self._stopping = False
+        self._inprocess_stopping = False
+
+        env = build_hermes_env()
+        # In subprocess mode this mapping is passed to Popen. In-process mode
+        # Hermes must see the exact same merged/persisted environment.
+        os.environ.update(env)
+        os.environ.setdefault("HERMES_SKIP_GATEWAY_MCP_DISCOVERY", "1")
+        os.environ["HERMES_GATEWAY_EXTERNAL_SUPERVISOR"] = "1"
+        write_config_yaml(read_env(ENV_FILE))
+
+        self.started_at = time.time()
+        self._started_monotonic = time.monotonic()
+        self._gateway_thread = threading.Thread(
+            target=self._inprocess_thread_main,
+            name="hermes-gateway",
+            daemon=True,
+        )
+        self._gateway_thread.start()
+        asyncio.create_task(self._watch_inprocess_runtime_ready())
 
     async def start(self, *, reset_budget: bool = True):
+        if self._inprocess_enabled():
+            await self._start_inprocess(reset_budget=reset_budget)
+            return
         if self.proc and self.proc.returncode is None:
             return
         # A manual Start/Restart (or boot) grants a fresh crash-loop budget; the
@@ -1507,6 +1621,34 @@ class Gateway:
 
     async def stop(self):
         self._stopping = True
+
+        if self._inprocess_enabled() and self._gateway_thread is not None:
+            self._inprocess_stopping = True
+            self.state = "stopping"
+            loop = self._gateway_loop
+            runner = None
+            try:
+                gateway_run = self._gateway_run_module
+                ref = getattr(gateway_run, "_gateway_runner_ref", None) if gateway_run else None
+                runner = ref() if callable(ref) else None
+            except Exception:
+                runner = None
+
+            if loop is not None and runner is not None and loop.is_running():
+                try:
+                    fut = asyncio.run_coroutine_threadsafe(runner.stop(), loop)
+                    await asyncio.to_thread(lambda: fut.result(timeout=65))
+                except Exception as exc:
+                    print(f"[gateway] in-process graceful stop failed: {type(exc).__name__}", flush=True)
+
+            thread = self._gateway_thread
+            if thread is not None and thread.is_alive():
+                await asyncio.to_thread(thread.join, 5)
+            self._gateway_thread = None
+            self.state = "stopped"
+            self.started_at = None
+            return
+
         if not self.proc or self.proc.returncode is not None:
             self.state = "stopped"
             return
@@ -2110,8 +2252,14 @@ async def route_diagnostics(request: Request):
         {
             "status": "ok",
             "gateway": getattr(gw, "state", "unknown"),
-            "gateway_process_pid": gw.proc.pid if gw.proc and gw.proc.returncode is None else None,
+            "gateway_execution_mode": "inprocess-thread" if gw._inprocess_enabled() else "subprocess",
+            "gateway_process_pid": (
+                os.getpid()
+                if gw._inprocess_enabled() and gw._gateway_thread is not None and gw._gateway_thread.is_alive()
+                else (gw.proc.pid if gw.proc and gw.proc.returncode is None else None)
+            ),
             "gateway_process_returncode": gw.proc.returncode if gw.proc else None,
+            "gateway_thread_alive": bool(gw._gateway_thread and gw._gateway_thread.is_alive()),
             "gateway_process_uptime_seconds": int(time.time() - gw.started_at) if gw.started_at else None,
             "gateway_log_flags": log_flags,
             "gateway_log_lines_buffered": len(gw.logs),
