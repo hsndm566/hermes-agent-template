@@ -827,6 +827,12 @@ def build_hermes_env() -> dict[str, str]:
     # long as the container. /tmp gives it that and nothing more; hermes mkdirs
     # the path itself. setdefault, so a Railway variable can move it back.
     env.setdefault("HERMES_GATEWAY_LOCK_DIR", "/tmp/hermes-gateway-locks")
+    # This Northflank service is Telegram-first and memory-constrained. Hermes
+    # v2026.9.11 performs MCP discovery before platform adapters start; saved
+    # stdio/HTTP MCP entries can consume the 512 MB container before Telegram
+    # reaches polling. The lightweight launcher below can skip ONLY this boot
+    # discovery while leaving mcp_servers persisted for dashboard/manual use.
+    env.setdefault("HERMES_SKIP_GATEWAY_MCP_DISCOVERY", "1")
     # Drop inbound values first: the template is the only thing allowed to
     # decide these (this pop covers a Railway service variable, which lands in
     # our own os.environ; _sanitize_env_file() covers the .env file).
@@ -1465,7 +1471,7 @@ class Gateway:
             # default; the persistent watchdog dump remains available for diagnosis.
             env.setdefault("HERMES_STARTUP_WATCHDOG_TIMEOUT_S", "120")
             self.proc = await asyncio.create_subprocess_exec(
-                "python", "-m", "gateway.run", "--verbose",
+                "python", "/app/scripts/run-hermes-gateway-lite.py", "--verbose",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 env=env,
@@ -2010,6 +2016,22 @@ async def route_diagnostics(request: Request):
     elif getattr(gw, "state", "unknown") == "error":
         gateway_issue = "gateway_error"
 
+    config_topology = {"mcp_server_count": 0, "multiplex_profiles": False}
+    try:
+        import yaml
+        config_path = Path(HERMES_HOME) / "config.yaml"
+        if config_path.exists():
+            parsed_cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            if isinstance(parsed_cfg, dict):
+                mcp_servers = parsed_cfg.get("mcp_servers")
+                config_topology["mcp_server_count"] = len(mcp_servers) if isinstance(mcp_servers, dict) else 0
+                gateway_cfg = parsed_cfg.get("gateway") if isinstance(parsed_cfg.get("gateway"), dict) else {}
+                config_topology["multiplex_profiles"] = bool(
+                    gateway_cfg.get("multiplex_profiles") or parsed_cfg.get("multiplex_profiles")
+                )
+    except Exception:
+        pass
+
     runtime = {}
     telegram_runtime = {}
     try:
@@ -2110,6 +2132,9 @@ async def route_diagnostics(request: Request):
             "gateway_runtime_state": runtime.get("gateway_state"),
             "gateway_runtime_exit_reason": runtime.get("exit_reason"),
             "gateway_startup_watchdog": watchdog or {"fired": False},
+            "mcp_server_count": config_topology["mcp_server_count"],
+            "multiplex_profiles": config_topology["multiplex_profiles"],
+            "gateway_mcp_boot_discovery_skipped": os.getenv("HERMES_SKIP_GATEWAY_MCP_DISCOVERY", "0").strip().lower() in {"1", "true", "yes", "on"},
             "telegram_approved_users": approved_count,
             "telegram_pending_users": pending_count,
             "telegram_owner_persisted": safe(lambda: (Path(HERMES_HOME) / "telegram_owner.json").exists(), False),
