@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
 import App from './App'
+import { AuthGate } from './lib/AuthGate'
 import { I18nProvider } from './lib/i18n'
 import { BusinessProvider } from './lib/BusinessContext'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -12,9 +13,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <ErrorBoundary>
       <HashRouter>
         <I18nProvider>
-          <BusinessProvider>
+          <AuthGate><BusinessProvider>
             <App />
-          </BusinessProvider>
+          </BusinessProvider></AuthGate>
         </I18nProvider>
       </HashRouter>
     </ErrorBoundary>

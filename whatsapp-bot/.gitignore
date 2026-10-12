@@ -1,0 +1,8 @@
+frontend-src/node_modules/
+frontend-src/*.tsbuildinfo
+frontend-src/vite.config.js
+frontend-src/vite.config.d.ts
+frontend/assets/
+__pycache__/
+.pytest_cache/
+.env

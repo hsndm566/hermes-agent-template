@@ -37,7 +37,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     let message = res.statusText
     try {
       const data = await res.json()
-      message = data?.detail || message
+      message = typeof data?.detail === 'string' ? data.detail : Array.isArray(data?.detail) ? data.detail.map((e: {msg: string}) => e.msg).join('; ') : message
     } catch {}
     throw new ApiError(res.status, message)
   }
@@ -45,7 +45,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return (await res.json()) as T
 }
 
+export interface Conversation { phone: string; body: string; direction: 'inbound' | 'outbound'; created_at: string }
+export interface Message extends Conversation { id: string }
 export const api = {
+  setup: () => request<{ok: boolean; username: string}>('POST', '/api/setup'),
+  conversations: (id: string) => request<Conversation[]>('GET', `/api/businesses/${id}/conversations`),
+  messages: (id: string, phone: string) => request<Message[]>('GET', `/api/businesses/${id}/messages?phone=${encodeURIComponent(phone)}`),
   login: (username: string, password: string) => request<{ ok: boolean }>('POST', '/api/login', { username, password }),
   logout: () => request<{ ok: boolean }>('POST', '/api/logout'),
   session: () => request<{ ok: boolean; username: string }>('GET', '/api/session'),

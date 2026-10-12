@@ -1,5 +1,5 @@
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from .config import settings
 
@@ -21,12 +21,31 @@ def normalize_phone(value: str) -> str:
 
 def jid_to_phone(key: dict, data: dict) -> str:
     candidates = [key.get("remoteJidAlt"), data.get("senderPn"), data.get("remoteJidAlt"), key.get("remoteJid")]
-    for c in candidates:
-        if not c:
+    for candidate in candidates:
+        if not isinstance(candidate, str):
             continue
-        if "@s.whatsapp.net" in c or "@c.us" in c or "@lid" not in c:
-            return normalize_phone(c.split("@")[0])
-    return normalize_phone((key.get("remoteJid") or "").split("@")[0])
+        local, _, domain = candidate.partition('@')
+        if domain not in {'', 's.whatsapp.net', 'c.us'}:
+            continue  # LIDs, groups and broadcast addresses are not phone numbers.
+        phone = normalize_phone(local.split(':')[0])
+        if re.fullmatch(r'[1-9][0-9]{7,14}', phone):
+            return phone
+    return ''
+
+def inbound_timestamp(data: dict) -> datetime | None:
+    value = data.get('messageTimestamp')
+    if isinstance(value, dict):
+        value = value.get('low')
+    try:
+        stamp = float(value)
+        if stamp > 100_000_000_000:
+            stamp /= 1000
+        result = datetime.fromtimestamp(stamp, timezone.utc)
+        if stamp <= 0 or stamp > datetime.now(timezone.utc).timestamp() + 60:
+            return None
+        return result
+    except (ValueError, TypeError, OverflowError, OSError):
+        return None
 
 def local_dt(dt: datetime) -> datetime:
     return dt.astimezone(TZ)

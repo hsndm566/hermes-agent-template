@@ -6,7 +6,7 @@
   },
   "deploy": {
     "startCommand": "/app/start-all.sh",
-    "healthcheckPath": "/health",
+    "healthcheckPath": "/ready",
     "healthcheckTimeout": 180,
     "sleepApplication": false,
     "restartPolicyType": "ON_FAILURE",

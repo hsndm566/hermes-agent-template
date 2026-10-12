@@ -3,20 +3,21 @@ import asyncio
 import asyncpg
 import httpx
 import re
+import os
 from uuid import UUID,uuid4
 from decimal import Decimal
 from datetime import datetime, time
 from fastapi import FastAPI,Request,Response,Depends,HTTPException
-from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, FileResponse
 from redis.asyncio import Redis
 from .config import settings
 from .db import connect_db,close_db,get_pool
-from .auth import valid_credentials,issue_session,clear_session,require_admin
+from .auth import valid_credentials,issue_session,clear_session,require_admin,current_owner,serializer,COOKIE
 from .schemas import LoginIn,BusinessIn,ServiceIn,HoursIn,SettingsIn,StaffIn,BusinessProfileIn,AppointmentActionIn
 from .evolution import evolution
 from .booking import business, cancel as booking_cancel, reschedule as booking_reschedule
 from .state_machine import handle
-from .utils import jid_to_phone, normalize_phone
+from .utils import jid_to_phone, normalize_phone, inbound_timestamp
 from .worker import tick as reminder_tick, r as reminder_redis
 
 app=FastAPI(title='Saudi WhatsApp Booking',docs_url=None,redoc_url=None)
@@ -116,58 +117,47 @@ async def login(body:LoginIn,response:Response,request:Request):
 @app.post('/api/logout')
 async def logout(response:Response,_=Depends(require_admin)): clear_session(response); return {'ok':True}
 @app.get('/api/session')
-async def session(_=Depends(require_admin)): return {'ok':True,'username':settings.admin_username}
+async def session(_=Depends(require_admin)): return {'ok':True,'username':_}
+
+@app.post('/api/setup')
+async def setup_device(request:Request,response:Response):
+    # No registration or password: this browser receives a signed private workspace.
+    try:
+        owner=await require_admin(request)
+    except HTTPException:
+        owner=str(uuid4())
+        token=serializer.dumps({'u':owner})
+        response.set_cookie(COOKIE,token,httponly=True,secure=settings.app_public_url.startswith('https://'),samesite='strict',max_age=2592000,path='/')
+    return {'ok':True,'username':owner}
 
 @app.get('/api/client-defaults')
 async def client_defaults(_=Depends(require_admin)):
-    return {'test_phone': normalize_phone(settings.default_test_phone) if settings.default_test_phone else ''}
+    return {'test_phone': ''}
 
 async def tenant_or_404(bid:str):
     try: uid=UUID(bid)
     except: raise HTTPException(404,'Business not found')
     row=await business(uid)
     if not row: raise HTTPException(404,'Business not found')
+    owner=current_owner.get()
+    if owner != settings.admin_username and row.get('owner_session') != owner:
+        raise HTTPException(404,'Business not found')
     return row
 
 def qr_value(data):
     q=data.get('qrcode') or data
     return q.get('base64') if isinstance(q,dict) else None
 
-@app.get('/pair/{token}', response_class=HTMLResponse)
-async def pair_whatsapp(token: str):
-    expected=(settings.pairing_token or '').strip()
-    if not expected or not hmac.compare_digest(token,expected):
-        raise HTTPException(404,'Not found')
-    p=await get_pool()
-    b=await p.fetchrow("""SELECT * FROM businesses
-        WHERE whatsapp_session_id NOT LIKE 'test-%'
-        ORDER BY created_at DESC LIMIT 1""")
-    if not b:
-        raise HTTPException(404,'No WhatsApp business configured')
-    state=await evolution.state(b['whatsapp_session_id'])
-    current=(state.get('instance') or {}).get('state') if isinstance(state,dict) else 'unknown'
-    if current in {'open','connected'}:
-        return HTMLResponse("""<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8">
-        <meta name="viewport" content="width=device-width,initial-scale=1"><title>موعدي</title>
-        <body style="font-family:system-ui;background:#10251e;color:white;text-align:center;padding:40px">
-        <h1>تم اتصال واتساب ✅</h1><p>الآن أرسل رسالة إلى رقم البوت من رقم واتساب آخر لاختبار الرد.</p></body></html>""",
-        headers={'Cache-Control':'no-store'})
-    data=await evolution.connect(b['whatsapp_session_id'])
-    qr=qr_value(data)
-    if not qr:
-        raise HTTPException(503,'QR is not available yet; reload in a few seconds')
-    return HTMLResponse(f"""<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="20">
-    <title>ربط واتساب | موعدي</title>
-    <body style="font-family:system-ui;background:#10251e;color:white;text-align:center;padding:24px">
-    <h1>موعدي — ربط واتساب</h1><p>الحالة: {current}</p>
-    <img src="{qr}" alt="WhatsApp QR" style="width:min(88vw,380px);background:white;padding:12px;border-radius:20px">
-    <p>واتساب ← الإعدادات ← الأجهزة المرتبطة ← ربط جهاز</p>
-    <small>تتجدد الصفحة تلقائياً كل 20 ثانية.</small></body></html>""",
-    headers={'Cache-Control':'no-store'})
-
 @app.post('/api/businesses')
 async def add_business(body:BusinessIn,_=Depends(require_admin)):
+    owner=current_owner.get()
+    if not owner: raise HTTPException(401,'Open your workspace first')
+    p=await get_pool()
+    if owner != settings.admin_username:
+        count=await p.fetchval('SELECT COUNT(*) FROM businesses WHERE owner_session=$1',owner)
+        if count: raise HTTPException(409,'This browser already has a WhatsApp workspace')
+        throttle=f'new-workspace:{owner}'
+        if not await r.set(throttle,'1',nx=True,ex=30): raise HTTPException(429,'Please wait before trying again')
     bid=uuid4(); instance=('test-biz-' if body.test_mode else 'biz-')+bid.hex
     lat=Decimal(str(body.latitude)) if body.latitude is not None else None; lng=Decimal(str(body.longitude)) if body.longitude is not None else None
     if body.test_mode:
@@ -180,6 +170,7 @@ async def add_business(body:BusinessIn,_=Depends(require_admin)):
     async with p.acquire() as c:
         async with c.transaction():
             await c.execute('''INSERT INTO businesses(id,"businessId",name_ar,name_en,phone,whatsapp_session_id,maps_url,latitude,longitude,vat_number,cr_number) VALUES($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10)''',bid,body.name_ar,body.name_en,body.phone,instance,body.maps_url,lat,lng,body.vat_number,body.cr_number)
+            await c.execute('UPDATE businesses SET owner_session=$2 WHERE "businessId"=$1',bid,owner)
             await c.execute('INSERT INTO staff(id,"businessId",name_ar,name_en,is_active) VALUES($1,$2,$3,$4,true)',uuid4(),bid,'عام','General')
             for s in body.services:
                 await c.execute('INSERT INTO services(id,"businessId",name_ar,name_en,duration_min,price,buffer_min) VALUES($1,$2,$3,$4,$5,$6,$7)',uuid4(),bid,s.name_ar,s.name_en,s.duration_min,Decimal(str(s.price)),s.buffer_min)
@@ -206,11 +197,13 @@ async def add_business(body:BusinessIn,_=Depends(require_admin)):
 
 @app.get('/api/businesses')
 async def list_businesses(_=Depends(require_admin)):
-    out=[]
-    for raw in sorted(await r.smembers('platform:business_ids')):
-        row=await business(raw)
-        if row: out.append({k:(str(v) if isinstance(v,UUID) else v) for k,v in dict(row).items()})
-    return out
+    p=await get_pool()
+    owner=current_owner.get()
+    if owner == settings.admin_username:
+        rows=await p.fetch('SELECT * FROM businesses ORDER BY created_at DESC')
+    else:
+        rows=await p.fetch('SELECT * FROM businesses WHERE owner_session=$1 ORDER BY created_at DESC',owner)
+    return [{k:(str(v) if isinstance(v,UUID) else v) for k,v in dict(row).items()} for row in rows]
 
 @app.get('/api/businesses/{bid}')
 async def get_business(bid:str,_=Depends(require_admin)):
@@ -227,7 +220,7 @@ async def get_qr(bid:str,_=Depends(require_admin)):
     b=await tenant_or_404(bid)
     if b['whatsapp_session_id'].startswith('test-'): return {'qr':None,'state':'test'}
     try:
-        data=await evolution.connect(b['whatsapp_session_id']); return {'qr':qr_value(data),'raw':data}
+        data=await evolution.connect(b['whatsapp_session_id']); return {'qr':qr_value(data)}
     except Exception as e: raise HTTPException(502,str(e))
 
 @app.get('/api/businesses/{bid}/connection')
@@ -340,6 +333,28 @@ async def customers_list(bid:str,_=Depends(require_admin)):
     rows=await p.fetch('SELECT * FROM customers WHERE "businessId"=$1 ORDER BY last_visit DESC NULLS LAST, phone',uid)
     return [{k:(str(v) if isinstance(v,UUID) else v.isoformat() if isinstance(v,datetime) else v) for k,v in dict(x).items()} for x in rows]
 
+async def record_message(bid, phone, direction, text, provider_id=None):
+    p=await get_pool()
+    await p.execute('''INSERT INTO messages(id,"businessId",phone,direction,body,provider_id)
+        VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT ("businessId",direction,provider_id) DO NOTHING''',
+        uuid4(),UUID(str(bid)),phone,direction,text[:10000],provider_id)
+
+@app.get('/api/businesses/{bid}/conversations')
+async def conversations(bid:str,_=Depends(require_admin)):
+    await tenant_or_404(bid); p=await get_pool()
+    rows=await p.fetch('''SELECT * FROM (
+        SELECT DISTINCT ON (phone) phone,body,direction,created_at
+        FROM messages WHERE "businessId"=$1 ORDER BY phone,created_at DESC
+        ) latest ORDER BY created_at DESC LIMIT 100''',UUID(bid))
+    return [dict(row) for row in rows]
+
+@app.get('/api/businesses/{bid}/messages')
+async def conversation_messages(bid:str,phone:str,_=Depends(require_admin)):
+    await tenant_or_404(bid); p=await get_pool()
+    rows=await p.fetch('''SELECT id,phone,direction,body,created_at FROM messages
+        WHERE "businessId"=$1 AND phone=$2 ORDER BY created_at DESC LIMIT 200''',UUID(bid),normalize_phone(phone))
+    return [dict(row) for row in reversed(rows)]
+
 @app.delete('/api/businesses/{bid}/connection')
 async def disconnect(bid:str,_=Depends(require_admin)):
     b=await tenant_or_404(bid)
@@ -359,8 +374,8 @@ async def live_test_message(bid:str,request:Request,_=Depends(require_admin)):
     body=await request.json()
     phone=normalize_phone(body.get('phone',''))
     lang=(body.get('language') or 'ar').lower()
-    if not phone:
-        raise HTTPException(400,'A valid test phone is required')
+    if not re.fullmatch(r'[1-9][0-9]{7,14}',phone):
+        raise HTTPException(400,'Enter a valid phone number with country code')
     state=await evolution.state(b['whatsapp_session_id'])
     raw_state=(state.get('instance') or {}).get('state') if isinstance(state,dict) else None
     if raw_state not in {'open','connected'}:
@@ -370,16 +385,18 @@ async def live_test_message(bid:str,request:Request,_=Depends(require_admin)):
           'Connection test ✅ Reply with any message now to complete the inbound-message test.')
     started_at=datetime.now().astimezone().isoformat()
     p=await get_pool(); uid=UUID(bid)
-    for sk,sv in [('conversation_test_started_at',started_at),('conversation_test_phone',phone)]:
+    for sk,sv in [('conversation_test_started_at',started_at),('conversation_test_phone',phone),('conversation_test_sent_at','')]:
         await p.execute('''INSERT INTO settings(id,"businessId",key,value) VALUES($1,$2,$3,$4)
             ON CONFLICT ("businessId",key) DO UPDATE SET value=EXCLUDED.value''',uuid4(),uid,sk,sv)
     await evolution.send_text(b['whatsapp_session_id'],phone,text)
+    await p.execute('''INSERT INTO settings(id,"businessId",key,value) VALUES($1,$2,'conversation_test_sent_at',$3)
+        ON CONFLICT ("businessId",key) DO UPDATE SET value=EXCLUDED.value''',uuid4(),uid,started_at)
     return {'ok':True,'phone':phone,'language':lang,'state':raw_state,'started_at':started_at}
 
 @app.get('/api/businesses/{bid}/conversation-test-status')
 async def conversation_test_status(bid:str,_=Depends(require_admin)):
     await tenant_or_404(bid); uid=UUID(bid); p=await get_pool()
-    keys=['conversation_test_started_at','conversation_test_phone','last_inbound_at','last_inbound_phone','last_inbound_text']
+    keys=['conversation_test_sent_at','conversation_test_started_at','conversation_test_phone','last_inbound_at','last_inbound_phone','last_inbound_text']
     rows=await p.fetch('SELECT key,value FROM settings WHERE "businessId"=$1 AND key=ANY($2::text[])',uid,keys)
     data={x['key']:x['value'] for x in rows}
     started=data.get('conversation_test_started_at')
@@ -387,7 +404,7 @@ async def conversation_test_status(bid:str,_=Depends(require_admin)):
     inbound_at=data.get('last_inbound_at')
     inbound_phone=data.get('last_inbound_phone')
     ok=False
-    if started and inbound_at and expected and inbound_phone:
+    if started and data.get('conversation_test_sent_at') == started and inbound_at and expected and inbound_phone:
         try:
             ok=(normalize_phone(inbound_phone)==normalize_phone(expected)
                 and datetime.fromisoformat(inbound_at) >= datetime.fromisoformat(started))
@@ -403,7 +420,7 @@ async def whatsapp_webhook(request:Request):
     payload=await request.json(); event=(payload.get('event') or '').lower().replace('_','.')
     if event not in {'messages.upsert','messages-upsert'}: return {'ok':True}
     data=payload.get('data') or {}; key=data.get('key') or {}
-    if key.get('fromMe') or key.get('remoteJid','').endswith('@g.us'): return {'ok':True}
+    if key.get('fromMe') or key.get('remoteJid','').endswith(('@g.us','@broadcast','@newsletter')): return {'ok':True}
     msg=data.get('message') or {}
     if 'protocolMessage' in msg or msg.get('requestId'): return {'ok':True}
     instance=payload.get('instance') or data.get('instance') or ''
@@ -414,12 +431,7 @@ async def whatsapp_webhook(request:Request):
     text=msg.get('conversation') or (msg.get('extendedTextMessage') or {}).get('text') or (msg.get('imageMessage') or {}).get('caption') or ''
     if not text: return {'ok':True}
     phone=jid_to_phone(key,data)
-    if not phone: return JSONResponse({'ok':False,'error':'unknown sender'},400)
-    p=await get_pool()
-    now_iso=datetime.now().astimezone().isoformat()
-    for sk,sv in [('last_inbound_at',now_iso),('last_inbound_phone',phone),('last_inbound_text',text[:160])]:
-        await p.execute('''INSERT INTO settings(id,"businessId",key,value) VALUES($1,$2,$3,$4)
-            ON CONFLICT ("businessId",key) DO UPDATE SET value=EXCLUDED.value''',uuid4(),bid,sk,sv)
+    if not phone: return {'ok':True,'ignored':'sender phone unavailable'}
     mid=key.get('id')
     done_key=f'wa:message:done:{bid}:{mid}' if mid else None
     reply_key=f'wa:message:reply:{bid}:{mid}' if mid else None
@@ -440,17 +452,26 @@ async def whatsapp_webhook(request:Request):
             cached_reply=await r.get(reply_key) if reply_key else None
             if cached_reply:
                 await evolution.send_text(instance,phone,cached_reply)
+                await record_message(bid,phone,'outbound',cached_reply,mid)
                 pipe=r.pipeline()
                 pipe.set(done_key,'1',ex=86400)
                 pipe.delete(reply_key)
                 await pipe.execute()
                 return {'ok':True,'retried':True}
 
+            await record_message(bid,phone,'inbound',text,mid)
+            received_at=inbound_timestamp(data)
+            if received_at:
+                p=await get_pool()
+                for sk,sv in [('last_inbound_at',received_at.isoformat()),('last_inbound_phone',phone),('last_inbound_text',text[:160])]:
+                    await p.execute('''INSERT INTO settings(id,"businessId",key,value) VALUES($1,$2,$3,$4)
+                        ON CONFLICT ("businessId",key) DO UPDATE SET value=EXCLUDED.value''',uuid4(),bid,sk,sv)
             reply=await handle(bid,phone,text)
             if reply_key:
                 await r.set(reply_key,reply,ex=86400)
 
             await evolution.send_text(instance,phone,reply)
+            await record_message(bid,phone,'outbound',reply,mid)
 
             if done_key:
                 pipe=r.pipeline()
@@ -474,111 +495,20 @@ async def test_message(bid:str,request:Request,_=Depends(require_admin)):
     return {'reply':await handle(UUID(bid),phone,text)}
 
 
-@app.get('/connect', response_class=HTMLResponse, include_in_schema=False)
+@app.get('/connect', include_in_schema=False)
 async def connect_whatsapp():
-    return HTMLResponse("""<!doctype html>
-<html lang="en" dir="ltr">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <title>Maw3idi WhatsApp Connector</title>
-  <style>
-    :root{color-scheme:dark}*{box-sizing:border-box}
-    body{margin:0;background:#0b1210;color:#eef7f2;font:16px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-    main{max-width:720px;margin:0 auto;padding:28px 18px 54px}
-    h1{font-size:30px;margin:0 0 8px}.muted{color:#9eb4aa}.card{background:#12201a;border:1px solid #294238;border-radius:20px;padding:20px;margin-top:18px}
-    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.dot{width:12px;height:12px;border-radius:50%;background:#d39b35}.ok .dot{background:#42d392}
-    #qr{display:block;width:min(360px,100%);margin:18px auto;border-radius:14px;background:#fff;padding:10px}
-    button,input{font:inherit;border-radius:12px;border:1px solid #365246;padding:12px 14px}input{background:#0d1713;color:#fff;flex:1;min-width:220px}
-    button{background:#25d366;color:#06110b;border:0;font-weight:700;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}
-    code{word-break:break-all;color:#bde7d0}#result{white-space:pre-wrap}.hidden{display:none}
-  </style>
-</head>
-<body>
-<main>
-  <h1>Maw3idi WhatsApp Bot</h1>
-  <div class="muted">Connect one WhatsApp account, then prove the bot can send and receive a real message. Nothing else matters yet.</div>
+    return RedirectResponse('/#/whatsapp')
 
-  <section class="card">
-    <div id="stateRow" class="row"><span class="dot"></span><strong id="state">Loading WhatsApp instance…</strong></div>
-    <div id="instance" class="muted"></div>
-    <img id="qr" class="hidden" alt="WhatsApp pairing QR">
-    <div id="scanHelp" class="muted hidden">On the business phone: WhatsApp → Settings → Linked Devices → Link a Device → scan this QR.</div>
-  </section>
-
-  <section class="card">
-    <strong>Real send/receive test</strong>
-    <p class="muted">Use a different WhatsApp account from the business/bot account.</p>
-    <div class="row">
-      <input id="phone" inputmode="tel" placeholder="9665XXXXXXXX">
-      <button id="send" disabled>Send test</button>
-    </div>
-    <p id="result" class="muted">Waiting for WhatsApp to connect.</p>
-  </section>
-</main>
-<script>
-let bid=null, connected=false, lastQr=0;
-const $=id=>document.getElementById(id);
-async function j(url,opts){const r=await fetch(url,opts);let data={};try{data=await r.json()}catch{}if(!r.ok)throw new Error(data.detail||data.error||('HTTP '+r.status));return data}
-async function init(){
-  try{
-    const [businesses,defaults]=await Promise.all([j('/api/businesses'),j('/api/client-defaults')]);
-    if(!businesses.length) throw new Error('No business instance exists');
-    bid=businesses[0].businessId||businesses[0].id;
-    $('instance').textContent='Instance: '+(businesses[0].whatsapp_session_id||bid);
-    if(defaults.test_phone) $('phone').value=defaults.test_phone;
-    await refresh();
-    setInterval(refresh,3000);
-  }catch(e){$('state').textContent='Setup error: '+e.message}
-}
-async function refresh(){
-  if(!bid)return;
-  try{
-    const s=await j('/api/businesses/'+bid+'/connection');
-    const state=((s.instance||{}).state||'unknown').toLowerCase();
-    connected=state==='open'||state==='connected';
-    $('state').textContent=connected?'WhatsApp connected':'WhatsApp not connected — scan QR';
-    $('stateRow').classList.toggle('ok',connected);
-    $('send').disabled=!connected;
-    $('scanHelp').classList.toggle('hidden',connected);
-    if(connected){$('qr').classList.add('hidden');await refreshTest();return}
-    if(Date.now()-lastQr>20000){
-      const q=await j('/api/businesses/'+bid+'/qr');
-      if(q.qr){$('qr').src=q.qr;$('qr').classList.remove('hidden');lastQr=Date.now()}
-    }
-  }catch(e){$('state').textContent='Connection check failed: '+e.message}
-}
-async function refreshTest(){
-  if(!bid)return;
-  try{
-    const t=await j('/api/businesses/'+bid+'/conversation-test-status');
-    if(t.ok){$('result').textContent='✅ SEND + RECEIVE PASSED\\nLast inbound: '+(t.last_inbound_text||'(message received)')}
-    else if(t.started_at){$('result').textContent='Test sent. Reply from '+($('phone').value||'the test phone')+' and keep this page open.'}
-  }catch{}
-}
-$('send').onclick=async()=>{
-  $('send').disabled=true;$('result').textContent='Sending test message…';
-  try{
-    const data=await j('/api/businesses/'+bid+'/test-message',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({phone:$('phone').value,language:'ar'})});
-    $('result').textContent='✅ Outbound sent to '+data.phone+'. Reply to it now; inbound verification will update automatically.';
-    setTimeout(refreshTest,1500);
-  }catch(e){$('result').textContent='❌ '+e.message}
-  finally{$('send').disabled=!connected}
-};
-init();
-</script>
-</body>
-</html>""")
-
-
-@app.get('/', response_class=HTMLResponse, include_in_schema=False)
-async def product_root():
-    return await connect_whatsapp()
-
-
-# The VPS profile serves static assets through Nginx. The Railway profile copies
-# the same dashboard into /app/frontend so the public app can serve it directly.
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
-if Path('/app/frontend').is_dir():
-    app.mount('/', StaticFiles(directory='/app/frontend', html=True), name='frontend')
+FRONTEND = Path(os.getenv('FRONTEND_DIR', '/app/frontend' if Path('/app/frontend').is_dir() else str(Path(__file__).resolve().parents[2] / 'frontend')))
+
+@app.get('/', include_in_schema=False)
+async def product_root():
+    index = FRONTEND / 'index.html'
+    if not index.is_file():
+        raise HTTPException(503, 'Dashboard assets are not built')
+    return FileResponse(index, headers={'Cache-Control': 'no-store'})
+
+if FRONTEND.is_dir():
+    app.mount('/', StaticFiles(directory=str(FRONTEND), html=True), name='frontend')

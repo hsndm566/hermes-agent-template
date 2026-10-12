@@ -1,8 +1,8 @@
 # --- Stage 1: build the React/Vite dashboard -------------------------------
 FROM node:20-alpine AS frontend-build
 WORKDIR /src
-COPY frontend-src/package.json ./
-RUN npm install --no-audit --no-fund
+COPY frontend-src/package.json frontend-src/package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY frontend-src/ ./
 RUN npm run build
 
