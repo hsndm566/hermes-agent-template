@@ -1,6 +1,6 @@
 import { Route, Routes } from 'react-router-dom'
 import { AppShell } from './components/AppShell'
-import Overview from './pages/Overview'
+import QuickConnect from './pages/QuickConnect'
 import BotWhatsApp from './pages/BotWhatsApp'
 import Conversations from './pages/Conversations'
 import Appointments from './pages/Appointments'
@@ -15,7 +15,7 @@ export default function App() {
   return (
     <Routes>
       <Route element={<AppShell />}>
-        <Route index element={<Overview />} />
+        <Route index element={<QuickConnect />} />
         <Route path="conversations" element={<Conversations />} />
         <Route path="appointments" element={<Appointments />} />
         <Route path="customers" element={<Customers />} />

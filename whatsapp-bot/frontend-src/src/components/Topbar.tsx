@@ -13,7 +13,7 @@ export function Topbar({ title, onMenu }: { title: string; onMenu: () => void })
       </div>
       <div className="flex items-center gap-2">
         <span className="hidden rounded-full bg-moss-50 px-3 py-1.5 text-xs font-semibold text-moss-700 sm:inline-flex">
-          {lang === 'ar' ? 'وضع تجريبي' : 'Demo mode'}
+          {lang === 'ar' ? 'لوحة الإدارة' : 'Owner workspace'}
         </span>
         <button
           onClick={toggle}
@@ -21,6 +21,7 @@ export function Topbar({ title, onMenu }: { title: string; onMenu: () => void })
         >
           {lang === 'ar' ? 'EN' : 'ع'}
         </button>
+
       </div>
     </header>
   )

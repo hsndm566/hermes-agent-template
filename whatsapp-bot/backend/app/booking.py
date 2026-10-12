@@ -38,7 +38,7 @@ async def available_slots(bid, service_id, exclude_appointment=None):
     if not svc: return []
     cfg=await settings_map(bid); biz=await business(bid); people=await staff(bid)
     if not people: return []
-    ramadan=cfg.get('ramadan_mode','false').lower()=='true'; prayer=cfg.get('prayer_buffer_enabled','false').lower()=='true'; pb=int(cfg.get('prayer_buffer_min','30')); step=int(cfg.get('slot_interval_min','30'))
+    ramadan=cfg.get('ramadan_mode','false').lower()=='true'; prayer=cfg.get('prayer_buffer_enabled','false').lower()=='true'; pb=int(cfg.get('prayer_buffer_min','30')); step=max(5,min(240,int(cfg.get('slot_interval_min','30'))))
     out=[]
     for offset in range(7):
         d=(now+timedelta(days=offset)).date(); dow=(d.weekday()+1)%7

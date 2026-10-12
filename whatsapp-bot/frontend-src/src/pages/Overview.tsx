@@ -30,7 +30,7 @@ export default function Overview() {
   const connected = connState === 'open' || connState === 'connected'
   const ready = connected && !!testStatus?.ok
   const today = new Date().toDateString()
-  const upcoming = appointments.filter((a) => a.status === 'confirmed' || a.status === 'rescheduled')
+  const upcoming = appointments.filter((a) => (a.status === 'confirmed' || a.status === 'rescheduled') && new Date(a.start_time) > new Date()).sort((a,b) => Date.parse(a.start_time)-Date.parse(b.start_time))
   const todayCount = upcoming.filter((a) => new Date(a.start_time).toDateString() === today).length
   const upcomingCount = upcoming.filter((a) => new Date(a.start_time) > new Date()).length
   const uniqueCustomers = new Set(appointments.map((a) => a.customer_phone)).size
