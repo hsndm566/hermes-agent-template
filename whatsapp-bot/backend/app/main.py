@@ -17,7 +17,7 @@ from .schemas import LoginIn,BusinessIn,ServiceIn,HoursIn,SettingsIn,StaffIn,Bus
 from .evolution import evolution
 from .booking import business, cancel as booking_cancel, reschedule as booking_reschedule
 from .state_machine import handle
-from .utils import jid_to_phone, normalize_phone
+from .utils import jid_to_phone, normalize_phone, inbound_timestamp
 from .worker import tick as reminder_tick, r as reminder_redis
 
 app=FastAPI(title='Saudi WhatsApp Booking',docs_url=None,redoc_url=None)
@@ -374,8 +374,8 @@ async def live_test_message(bid:str,request:Request,_=Depends(require_admin)):
     body=await request.json()
     phone=normalize_phone(body.get('phone',''))
     lang=(body.get('language') or 'ar').lower()
-    if not phone:
-        raise HTTPException(400,'A valid test phone is required')
+    if not re.fullmatch(r'[1-9][0-9]{7,14}',phone):
+        raise HTTPException(400,'Enter a valid phone number with country code')
     state=await evolution.state(b['whatsapp_session_id'])
     raw_state=(state.get('instance') or {}).get('state') if isinstance(state,dict) else None
     if raw_state not in {'open','connected'}:
@@ -385,16 +385,18 @@ async def live_test_message(bid:str,request:Request,_=Depends(require_admin)):
           'Connection test ✅ Reply with any message now to complete the inbound-message test.')
     started_at=datetime.now().astimezone().isoformat()
     p=await get_pool(); uid=UUID(bid)
-    for sk,sv in [('conversation_test_started_at',started_at),('conversation_test_phone',phone)]:
+    for sk,sv in [('conversation_test_started_at',started_at),('conversation_test_phone',phone),('conversation_test_sent_at','')]:
         await p.execute('''INSERT INTO settings(id,"businessId",key,value) VALUES($1,$2,$3,$4)
             ON CONFLICT ("businessId",key) DO UPDATE SET value=EXCLUDED.value''',uuid4(),uid,sk,sv)
     await evolution.send_text(b['whatsapp_session_id'],phone,text)
+    await p.execute('''INSERT INTO settings(id,"businessId",key,value) VALUES($1,$2,'conversation_test_sent_at',$3)
+        ON CONFLICT ("businessId",key) DO UPDATE SET value=EXCLUDED.value''',uuid4(),uid,started_at)
     return {'ok':True,'phone':phone,'language':lang,'state':raw_state,'started_at':started_at}
 
 @app.get('/api/businesses/{bid}/conversation-test-status')
 async def conversation_test_status(bid:str,_=Depends(require_admin)):
     await tenant_or_404(bid); uid=UUID(bid); p=await get_pool()
-    keys=['conversation_test_started_at','conversation_test_phone','last_inbound_at','last_inbound_phone','last_inbound_text']
+    keys=['conversation_test_sent_at','conversation_test_started_at','conversation_test_phone','last_inbound_at','last_inbound_phone','last_inbound_text']
     rows=await p.fetch('SELECT key,value FROM settings WHERE "businessId"=$1 AND key=ANY($2::text[])',uid,keys)
     data={x['key']:x['value'] for x in rows}
     started=data.get('conversation_test_started_at')
@@ -402,7 +404,7 @@ async def conversation_test_status(bid:str,_=Depends(require_admin)):
     inbound_at=data.get('last_inbound_at')
     inbound_phone=data.get('last_inbound_phone')
     ok=False
-    if started and inbound_at and expected and inbound_phone:
+    if started and data.get('conversation_test_sent_at') == started and inbound_at and expected and inbound_phone:
         try:
             ok=(normalize_phone(inbound_phone)==normalize_phone(expected)
                 and datetime.fromisoformat(inbound_at) >= datetime.fromisoformat(started))
@@ -418,7 +420,7 @@ async def whatsapp_webhook(request:Request):
     payload=await request.json(); event=(payload.get('event') or '').lower().replace('_','.')
     if event not in {'messages.upsert','messages-upsert'}: return {'ok':True}
     data=payload.get('data') or {}; key=data.get('key') or {}
-    if key.get('fromMe') or key.get('remoteJid','').endswith('@g.us'): return {'ok':True}
+    if key.get('fromMe') or key.get('remoteJid','').endswith(('@g.us','@broadcast','@newsletter')): return {'ok':True}
     msg=data.get('message') or {}
     if 'protocolMessage' in msg or msg.get('requestId'): return {'ok':True}
     instance=payload.get('instance') or data.get('instance') or ''
@@ -429,13 +431,7 @@ async def whatsapp_webhook(request:Request):
     text=msg.get('conversation') or (msg.get('extendedTextMessage') or {}).get('text') or (msg.get('imageMessage') or {}).get('caption') or ''
     if not text: return {'ok':True}
     phone=jid_to_phone(key,data)
-    if not phone: return JSONResponse({'ok':False,'error':'unknown sender'},400)
-    await record_message(bid,phone,'inbound',text,key.get('id'))
-    p=await get_pool()
-    now_iso=datetime.now().astimezone().isoformat()
-    for sk,sv in [('last_inbound_at',now_iso),('last_inbound_phone',phone),('last_inbound_text',text[:160])]:
-        await p.execute('''INSERT INTO settings(id,"businessId",key,value) VALUES($1,$2,$3,$4)
-            ON CONFLICT ("businessId",key) DO UPDATE SET value=EXCLUDED.value''',uuid4(),bid,sk,sv)
+    if not phone: return {'ok':True,'ignored':'sender phone unavailable'}
     mid=key.get('id')
     done_key=f'wa:message:done:{bid}:{mid}' if mid else None
     reply_key=f'wa:message:reply:{bid}:{mid}' if mid else None
@@ -463,6 +459,13 @@ async def whatsapp_webhook(request:Request):
                 await pipe.execute()
                 return {'ok':True,'retried':True}
 
+            await record_message(bid,phone,'inbound',text,mid)
+            received_at=inbound_timestamp(data)
+            if received_at:
+                p=await get_pool()
+                for sk,sv in [('last_inbound_at',received_at.isoformat()),('last_inbound_phone',phone),('last_inbound_text',text[:160])]:
+                    await p.execute('''INSERT INTO settings(id,"businessId",key,value) VALUES($1,$2,$3,$4)
+                        ON CONFLICT ("businessId",key) DO UPDATE SET value=EXCLUDED.value''',uuid4(),bid,sk,sv)
             reply=await handle(bid,phone,text)
             if reply_key:
                 await r.set(reply_key,reply,ex=86400)

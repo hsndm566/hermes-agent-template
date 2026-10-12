@@ -8,7 +8,7 @@ class EvolutionClient:
         self.headers = {"apikey": settings.evolution_api_key, "Content-Type": "application/json"}
 
     async def _request(self, method: str, path: str, *, json=None, timeout=30):
-        async with httpx.AsyncClient(timeout=timeout) as c:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as c:
             r = await c.request(method, f"{self.base}{path}", headers=self.headers, json=json)
             r.raise_for_status()
             return r.json() if r.content else {}
@@ -44,14 +44,21 @@ class EvolutionClient:
             "syncFullHistory": False,
         }
         data = await self._request("POST", "/instance/create", json=payload)
-        await self.configure_webhook(instance)
-        hook = await self.find_webhook(instance)
-
-        hook_data = hook.get("webhook", hook) if isinstance(hook, dict) else {}
-        if isinstance(hook_data, dict):
-            nested = hook_data.get("webhook", hook_data)
-            if isinstance(nested, dict) and nested.get("enabled") is False:
-                raise RuntimeError("Evolution webhook was created but is disabled")
+        try:
+            await self.configure_webhook(instance)
+            hook = await self.find_webhook(instance)
+            hook_data = hook.get("webhook", hook) if isinstance(hook, dict) else {}
+            if isinstance(hook_data, dict):
+                nested = hook_data.get("webhook", hook_data)
+                if isinstance(nested, dict) and nested.get("enabled") is False:
+                    raise RuntimeError("Evolution webhook was created but is disabled")
+        except Exception:
+            # A partially created connection must not leave an orphan instance.
+            try:
+                await self.delete_instance(instance)
+            except Exception:
+                pass
+            raise
         return data
 
     async def connect(self, instance: str):

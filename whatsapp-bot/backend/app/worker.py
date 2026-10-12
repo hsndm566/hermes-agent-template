@@ -17,8 +17,10 @@ def text_for(lang,ar,en):
 async def tick():
     p=await get_pool()
     now=datetime.now(TZ)
-    for raw in await r.smembers('platform:business_ids'):
-        bid=UUID(raw)
+    # PostgreSQL is durable; a Redis restart must not disable reminders.
+    tenants=await p.fetch('SELECT "businessId" FROM businesses')
+    for tenant in tenants:
+        bid=tenant['businessId']
         biz=await business(bid)
         if not biz:
             continue

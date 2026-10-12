@@ -64,6 +64,8 @@ async def available_slots(bid, service_id, exclude_appointment=None):
 
 async def create_appointment(bid, phone, service_id, slot):
     p=await get_pool(); bid=UUID(str(bid)); staff_id=UUID(slot['staff_id']); start=datetime.fromisoformat(slot['start']); end=datetime.fromisoformat(slot['end'])
+    if start.tzinfo is None or end.tzinfo is None or start <= datetime.now(TZ) or end <= start:
+        raise asyncpg.ExclusionViolationError('slot unavailable')
     async with p.acquire() as conn:
         async with conn.transaction():
             await conn.execute('SELECT pg_advisory_xact_lock(hashtext($1))', f'{bid}:{staff_id}')
@@ -77,9 +79,11 @@ async def cancel(bid, aid):
     p=await get_pool(); return await p.fetchrow("UPDATE appointments SET status='cancelled' WHERE \"businessId\"=$1 AND id=$2 RETURNING *",UUID(str(bid)),UUID(str(aid)))
 async def reschedule(bid, aid, slot):
     p=await get_pool(); bid=UUID(str(bid)); aid=UUID(str(aid)); staff_id=UUID(slot['staff_id']); start=datetime.fromisoformat(slot['start']); end=datetime.fromisoformat(slot['end'])
+    if start.tzinfo is None or end.tzinfo is None or start <= datetime.now(TZ) or end <= start:
+        raise asyncpg.ExclusionViolationError('slot unavailable')
     async with p.acquire() as conn:
         async with conn.transaction():
             await conn.execute('SELECT pg_advisory_xact_lock(hashtext($1))',f'{bid}:{staff_id}')
             busy=await conn.fetchval("SELECT 1 FROM appointments WHERE \"businessId\"=$1 AND staff_id=$2 AND id<>$3 AND status IN ('confirmed','rescheduled') AND start_time<$4 AND end_time>$5",bid,staff_id,aid,end,start)
             if busy: raise asyncpg.ExclusionViolationError('slot unavailable')
-            return await conn.fetchrow("UPDATE appointments SET staff_id=$3,start_time=$4,end_time=$5,status='rescheduled' WHERE \"businessId\"=$1 AND id=$2 RETURNING *",bid,aid,staff_id,start,end)
+            return await conn.fetchrow("UPDATE appointments SET staff_id=$3,start_time=$4,end_time=$5,status='rescheduled',reminder_24_sent=false,reminder_2_sent=false,followup_sent=false WHERE \"businessId\"=$1 AND id=$2 RETURNING *",bid,aid,staff_id,start,end)

@@ -58,6 +58,8 @@ class SettingsIn(BaseModel):
 
     @model_validator(mode='after')
     def validate_values(self):
+        if any(key.startswith(('conversation_test_', 'last_inbound_')) for key in self.values):
+            raise ValueError('Connection test results are read-only')
         for key, low, high in [('slot_interval_min', 5, 240), ('prayer_buffer_min', 0, 120)]:
             if key in self.values:
                 try:
